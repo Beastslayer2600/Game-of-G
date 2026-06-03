@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA_MODES } from '../constants.js';
+import { CAMERA_MODES, BUILDING_COSTS } from '../constants.js';
 
 export class PlayerController {
   constructor(scene, renderer, game) {
@@ -18,7 +18,7 @@ export class PlayerController {
     this.pitch   = 0;
     this.locked  = false;
 
-    this.rtsCam = new THREE.PerspectiveCamera(55, aspect, 0.5, 2000);
+    this.rtsCam    = new THREE.PerspectiveCamera(55, aspect, 0.5, 2000);
     this.rtsTarget = new THREE.Vector3(sp.x, 0, sp.z);
     this.rtsHeight = 85;
     this.rtsTilt   = 55;
@@ -26,14 +26,14 @@ export class PlayerController {
 
     this.camera = this.rtsCam;
 
-    this.ray       = new THREE.Raycaster();
-    this.mouseNDC  = new THREE.Vector2();
-    this.rawMouse  = { dx: 0, dy: 0 };
-
-    this.keys = {};
+    this.ray      = new THREE.Raycaster();
+    this.mouseNDC = new THREE.Vector2();
+    this.rawMouse = { dx: 0, dy: 0 };
+    this.keys     = {};
 
     this.buildType    = null;
     this.buildPreview = null;
+    this._previewMat  = null;
 
     this.selected = [];
 
@@ -52,8 +52,8 @@ export class PlayerController {
         else if (this.locked) document.exitPointerLock();
       }
 
-      const map = {'Digit1':'farm','Digit2':'lumbermill','Digit3':'quarry',
-                   'Digit4':'barracks','Digit5':'tower','Digit6':'house'};
+      const map = { Digit1:'farm', Digit2:'lumbermill', Digit3:'quarry',
+                    Digit4:'barracks', Digit5:'tower', Digit6:'house' };
       if (map[e.code]) this._startBuild(map[e.code]);
 
       if (e.code === 'KeyT') {
@@ -70,24 +70,28 @@ export class PlayerController {
     window.addEventListener('mousemove', e => {
       this.mouseNDC.set(
         (e.clientX / window.innerWidth) * 2 - 1,
-        -(e.clientY / window.innerHeight) * 2 + 1
+        -(e.clientY / window.innerHeight) * 2 + 1,
       );
       this.rawMouse.dx = e.movementX;
       this.rawMouse.dy = e.movementY;
     });
 
-    cvs.addEventListener('click', e => {
+    cvs.addEventListener('click', () => {
       if (this.mode === CAMERA_MODES.FPS) {
         if (!this.locked) { cvs.requestPointerLock(); return; }
         this._fpsShoot();
       } else {
         if (this.buildType) this._placeBuild();
+        else this._trySelectUnit();
       }
     });
 
     cvs.addEventListener('contextmenu', e => {
       e.preventDefault();
-      if (this.mode === CAMERA_MODES.RTS && this.selected.length) this._moveSelected();
+      if (this.mode === CAMERA_MODES.RTS) {
+        if (this.buildType) { this._cancelBuild(); return; }
+        if (this.selected.length) this._moveSelected();
+      }
     });
 
     document.addEventListener('pointerlockchange', () => {
@@ -116,19 +120,20 @@ export class PlayerController {
 
   _startBuild(type) {
     if (this.mode !== CAMERA_MODES.RTS) { this.mode = CAMERA_MODES.RTS; this.camera = this.rtsCam; }
+    this._cancelBuild(); // clear any existing preview
     this.buildType = type;
-    if (this.buildPreview) this.scene.remove(this.buildPreview);
-    this.buildPreview = new THREE.Mesh(
-      new THREE.BoxGeometry(8,6,8),
-      new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true, transparent: true, opacity: 0.6 })
-    );
+    this._previewMat = new THREE.MeshBasicMaterial({
+      color: 0x00ff88, wireframe: true, transparent: true, opacity: 0.65,
+    });
+    this.buildPreview = new THREE.Mesh(new THREE.BoxGeometry(8, 6, 8), this._previewMat);
     this.scene.add(this.buildPreview);
-    this.game.hud?.showMsg(`Click to place ${type}`);
+    this.game.hud?.showMsg(`Click to place ${type} — right-click to cancel`);
   }
 
   _cancelBuild() {
     this.buildType = null;
     if (this.buildPreview) { this.scene.remove(this.buildPreview); this.buildPreview = null; }
+    this._previewMat = null;
   }
 
   _groundPoint() {
@@ -141,12 +146,35 @@ export class PlayerController {
     const pt = this._groundPoint();
     if (!pt) return;
     pt.y = this.game.world.getHeightAt(pt.x, pt.z);
+    if (!this.game.world.terrain.isBuildable(pt.x, pt.z)) {
+      this.game.hud?.showMsg('Cannot build here — terrain too steep or underwater!', true);
+      return;
+    }
     const b = this.game.playerKingdom.tryBuild(this.buildType, pt);
     if (b) {
-      this.game.hud?.showMsg(`${this.buildType} built!`);
+      this.game.hud?.showMsg(`${this.buildType.charAt(0).toUpperCase() + this.buildType.slice(1)} built!`);
       this._cancelBuild();
     } else {
       this.game.hud?.showMsg('Not enough resources!', true);
+    }
+  }
+
+  _trySelectUnit() {
+    this.ray.setFromCamera(this.mouseNDC, this.rtsCam);
+
+    // Deselect all current
+    for (const u of this.selected) u.setSelected?.(false);
+    this.selected = [];
+
+    for (const u of this.game.playerKingdom.allUnits()) {
+      if (!u.mesh || u.isDead()) continue;
+      const hits = this.ray.intersectObject(u.mesh, true);
+      if (hits.length) {
+        this.selected.push(u);
+        u.setSelected?.(true);
+        this.game.hud?.showMsg(`${u.type} selected — right-click to move`);
+        return;
+      }
     }
   }
 
@@ -154,7 +182,7 @@ export class PlayerController {
     const pt = this._groundPoint();
     if (!pt) return;
     this.selected.forEach((u, i) => {
-      const off = new THREE.Vector3((i%3 - 1)*4, 0, Math.floor(i/3)*4);
+      const off = new THREE.Vector3((i % 3 - 1) * 4, 0, Math.floor(i / 3) * 4);
       u.moveTo(pt.clone().add(off));
     });
   }
@@ -189,12 +217,8 @@ export class PlayerController {
 
   _positionRTSCam() {
     const tilt = this.rtsTilt * Math.PI / 180;
-    const back  = this.rtsHeight / Math.tan(tilt);
-    this.rtsCam.position.set(
-      this.rtsTarget.x,
-      this.rtsHeight,
-      this.rtsTarget.z + back
-    );
+    const back = this.rtsHeight / Math.tan(tilt);
+    this.rtsCam.position.set(this.rtsTarget.x, this.rtsHeight, this.rtsTarget.z + back);
     this.rtsCam.lookAt(this.rtsTarget.x, 0, this.rtsTarget.z);
   }
 
@@ -202,15 +226,21 @@ export class PlayerController {
     if (this.mode === CAMERA_MODES.FPS) this._updateFPS(delta);
     else this._updateRTS(delta);
 
-    if (this.buildPreview) {
+    // Update build preview position and validity color
+    if (this.buildPreview && this._previewMat) {
       const pt = this._groundPoint();
       if (pt) {
-        pt.y = this.game.world.getHeightAt(pt.x, pt.z) + 3;
-        this.buildPreview.position.copy(pt);
+        const groundY = this.game.world.getHeightAt(pt.x, pt.z);
+        this.buildPreview.position.set(pt.x, groundY + 3, pt.z);
+
+        const buildable  = this.game.world.terrain.isBuildable(pt.x, pt.z);
+        const canAfford  = this.game.playerKingdom.canAfford(BUILDING_COSTS[this.buildType] ?? {});
+        this._previewMat.color.setHex(buildable && canAfford ? 0x00ff88 : 0xff2222);
       }
     }
 
-    this.rawMouse.dx = 0; this.rawMouse.dy = 0;
+    this.rawMouse.dx = 0;
+    this.rawMouse.dy = 0;
   }
 
   _updateFPS(delta) {

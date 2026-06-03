@@ -1,79 +1,118 @@
-import { BUILDING_COSTS } from '../constants.js';
+import { BUILDING_COSTS, GAME_STATES } from '../constants.js';
 
-const css = (el, styles) => Object.assign(el.style, styles);
-const div = (styles = {}, html = '') => {
-  const el = document.createElement('div');
-  css(el, styles); el.innerHTML = html; return el;
+const css = (el, s) => Object.assign(el.style, s);
+const el  = (tag, s = {}, html = '') => {
+  const e = document.createElement(tag);
+  css(e, s); e.innerHTML = html; return e;
 };
+
+const BASE = {
+  fontFamily: "'Georgia', serif",
+  color: '#f0e6c8',
+  textShadow: '1px 1px 3px #000',
+  background: 'rgba(18,10,2,0.88)',
+  border: '2px solid #8b6914',
+  borderRadius: '8px',
+};
+const PANEL = { ...BASE, position: 'absolute' };
+
+const K_COLORS = ['#88aaff', '#ff7777', '#77dd77', '#ffcc44'];
+const K_NAMES  = ['Your Kingdom', 'Red Kingdom', 'Green Kingdom', 'Orange Kingdom'];
 
 export class HUD {
   constructor(game) {
-    this.game    = game;
-    this.msgTimer = null;
-    this._build();
+    this.game      = game;
+    this.msgTimer  = null;
+    this._gameOver = false;
+    this._minimapCache = null;
+    this._minimapTimer  = 0;
+
+    this._buildUI();
+    this._buildStartScreen();
+    this._buildEndScreen();
+    this._buildMinimap();
   }
 
-  _build() {
+  // ── UI panels ──────────────────────────────────────────────────────────────
+
+  _buildUI() {
     const root = document.getElementById('ui-root');
     root.innerHTML = '';
 
-    const BASE = {
-      position: 'absolute', fontFamily: "'Georgia', serif",
-      color: '#f0e6c8', textShadow: '1px 1px 2px #000',
-      background: 'rgba(25,16,6,0.88)',
-      border: '2px solid #8b6914', borderRadius: '8px',
-    };
-
-    this.resBar = div({ ...BASE, top: '10px', left: '50%', transform: 'translateX(-50%)',
-      padding: '8px 24px', display: 'flex', gap: '20px', alignItems: 'center',
-      fontSize: '14px', whiteSpace: 'nowrap' });
+    // Resource bar (top center)
+    this.resBar = el('div', {
+      ...PANEL, top: '10px', left: '50%', transform: 'translateX(-50%)',
+      padding: '8px 22px', display: 'flex', gap: '18px', alignItems: 'center',
+      fontSize: '14px', whiteSpace: 'nowrap', userSelect: 'none',
+    });
     root.appendChild(this.resBar);
 
-    this.modeBox = div({ ...BASE, top: '10px', right: '10px',
-      padding: '10px 16px', fontSize: '13px', lineHeight: '1.6' });
+    // Mode info (top right)
+    this.modeBox = el('div', {
+      ...PANEL, top: '10px', right: '10px', padding: '10px 14px', fontSize: '12px', lineHeight: '1.7',
+    });
     root.appendChild(this.modeBox);
 
-    this.overview = div({ ...BASE, top: '10px', left: '10px',
-      padding: '10px 14px', fontSize: '12px', minWidth: '155px' });
+    // Kingdom overview (top left)
+    this.overview = el('div', {
+      ...PANEL, top: '10px', left: '10px', padding: '10px 13px', fontSize: '12px', minWidth: '150px',
+    });
     root.appendChild(this.overview);
 
-    this.buildBar = div({ ...BASE, bottom: '10px', left: '50%', transform: 'translateX(-50%)',
-      padding: '8px 14px', display: 'flex', gap: '8px', pointerEvents: 'all' });
+    // Build / train bar (bottom center)
+    this.buildBar = el('div', {
+      ...PANEL, bottom: '10px', left: '50%', transform: 'translateX(-50%)',
+      padding: '8px 12px', display: 'flex', gap: '7px', pointerEvents: 'all',
+    });
     this._populateBuildBar();
     root.appendChild(this.buildBar);
 
-    this.fpsPanel = div({ ...BASE, bottom: '80px', left: '10px',
-      padding: '8px 12px', fontSize: '11px', lineHeight: '1.7', display: 'none' },
-      'WASD — Move<br>Mouse — Look<br>Click — Attack<br>TAB — RTS mode<br>ESC — Unlock mouse'
-    );
+    // FPS controls hint (bottom left)
+    this.fpsPanel = el('div', {
+      ...PANEL, bottom: '90px', left: '10px', padding: '8px 12px', fontSize: '11px',
+      lineHeight: '1.8', display: 'none',
+    }, 'WASD — Move<br>Mouse — Look<br>Click — Attack<br>TAB — RTS mode<br>ESC — Unlock mouse');
     root.appendChild(this.fpsPanel);
 
-    this.crosshair = div({ position: 'absolute', top: '50%', left: '50%',
+    // Crosshair
+    this.crosshair = el('div', {
+      position: 'absolute', top: '50%', left: '50%',
       transform: 'translate(-50%,-50%)', width: '22px', height: '22px',
-      pointerEvents: 'none', display: 'none' },
-      `<div style="position:absolute;top:50%;left:0;width:100%;height:2px;background:rgba(255,255,255,.85);transform:translateY(-50%)"></div>
-       <div style="position:absolute;top:0;left:50%;width:2px;height:100%;background:rgba(255,255,255,.85);transform:translateX(-50%)"></div>`
-    );
+      pointerEvents: 'none', display: 'none',
+    }, `<div style="position:absolute;top:50%;left:0;width:100%;height:2px;background:rgba(255,255,255,.8);transform:translateY(-50%)"></div>
+        <div style="position:absolute;top:0;left:50%;width:2px;height:100%;background:rgba(255,255,255,.8);transform:translateX(-50%)"></div>`);
     root.appendChild(this.crosshair);
 
-    this.msgBox = div({ ...BASE, top: '50%', left: '50%',
-      transform: 'translate(-50%,-50%)', padding: '12px 26px', fontSize: '18px',
-      opacity: '0', transition: 'opacity 0.3s', pointerEvents: 'none' });
+    // Toast message
+    this.msgBox = el('div', {
+      ...PANEL, bottom: '90px', left: '50%', transform: 'translateX(-50%)',
+      padding: '10px 24px', fontSize: '16px',
+      opacity: '0', transition: 'opacity 0.25s', pointerEvents: 'none',
+    });
     root.appendChild(this.msgBox);
+
+    // Deselect hint (above build bar, only in RTS when units selected)
+    this.selHint = el('div', {
+      position: 'absolute', bottom: '75px', left: '50%', transform: 'translateX(-50%)',
+      color: '#00eeff', fontSize: '12px', textShadow: '0 0 6px #00aabb',
+      opacity: '0', transition: 'opacity 0.3s', pointerEvents: 'none',
+    });
+    root.appendChild(this.selHint);
 
     this.updateMode('rts');
   }
 
-  _btn(label, sub, onClick) {
+  _btn(icon, label, sub, onClick, borderColor = '#8b6914') {
     const b = document.createElement('button');
-    b.innerHTML = `<div style="font-size:17px">${label}</div><div style="font-size:10px;opacity:.65">${sub}</div>`;
+    b.innerHTML = `<div style="font-size:16px">${icon} ${label}</div><div style="font-size:10px;opacity:.6;margin-top:2px">${sub}</div>`;
     css(b, {
-      background: 'rgba(40,28,10,.9)', border: '1px solid #8b6914',
-      color: '#f0e6c8', padding: '8px 11px', borderRadius: '6px',
-      cursor: 'pointer', fontFamily: "'Georgia',serif", textAlign: 'center', minWidth: '74px'
+      background: 'rgba(35,22,6,.92)', border: `1px solid ${borderColor}`,
+      color: '#f0e6c8', padding: '7px 10px', borderRadius: '6px',
+      cursor: 'pointer', fontFamily: "'Georgia',serif", textAlign: 'center', minWidth: '72px',
+      transition: 'background 0.15s, transform 0.1s',
     });
-    b.addEventListener('mouseenter', () => b.style.background = 'rgba(90,62,22,.9)');
-    b.addEventListener('mouseleave', () => b.style.background = 'rgba(40,28,10,.9)');
+    b.addEventListener('mouseenter', () => { b.style.background = 'rgba(80,55,16,.95)'; b.style.transform = 'translateY(-2px)'; });
+    b.addEventListener('mouseleave', () => { b.style.background = 'rgba(35,22,6,.92)'; b.style.transform = 'translateY(0)'; });
     b.addEventListener('click', onClick);
     return b;
   }
@@ -88,77 +127,305 @@ export class HUD {
       { type:'house',      icon:'🏠', key:'6' },
     ];
     for (const b of buildings) {
-      const cost  = BUILDING_COSTS[b.type];
-      const costStr = Object.entries(cost).map(([r,v])=>`${r[0].toUpperCase()}:${v}`).join(' ');
-      const btn = this._btn(`${b.icon} ${b.type}`, `[${b.key}] ${costStr}`, () => {
+      const cost    = BUILDING_COSTS[b.type];
+      const costStr = Object.entries(cost).map(([r, v]) => `${r[0].toUpperCase()}:${v}`).join(' ');
+      const btn = this._btn(b.icon, b.type, `[${b.key}] ${costStr}`, () => {
         this.game.player._startBuild(b.type);
       });
       this.buildBar.appendChild(btn);
     }
-    const trainSoldier = this._btn('⚔️ Soldier', '[T] F:75 G:25', () => {
-      const u = this.game.playerKingdom.tryTrain('soldier');
-      this.showMsg(u ? 'Soldier trained!' : 'Need: 75 food + 25 gold', !u);
-    });
-    css(trainSoldier, { borderColor: '#cc4444' });
-    this.buildBar.appendChild(trainSoldier);
 
-    const trainVillager = this._btn('👤 Villager', '[V] F:50', () => {
+    this.buildBar.appendChild(this._btn('⚔️', 'Soldier', '[T] F:75 G:25', () => {
+      const u = this.game.playerKingdom.tryTrain('soldier');
+      this.showMsg(u ? 'Soldier trained!' : 'Not enough resources!', !u);
+    }, '#cc4444'));
+
+    this.buildBar.appendChild(this._btn('👤', 'Villager', '[V] F:50', () => {
       const u = this.game.playerKingdom.tryTrain('villager');
-      this.showMsg(u ? 'Villager trained!' : 'Need: 50 food', !u);
-    });
-    css(trainVillager, { borderColor: '#44cc44' });
-    this.buildBar.appendChild(trainVillager);
+      this.showMsg(u ? 'Villager trained!' : 'Need 50 food!', !u);
+    }, '#44cc44'));
   }
+
+  // ── Start screen ───────────────────────────────────────────────────────────
+
+  _buildStartScreen() {
+    const overlay = el('div', {
+      position: 'fixed', inset: '0',
+      background: 'linear-gradient(to bottom, rgba(4,8,16,.82) 0%, rgba(8,18,10,.78) 100%)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'Georgia', serif", zIndex: '100', pointerEvents: 'all',
+    });
+
+    const card = el('div', {
+      background: 'rgba(12,7,2,.92)',
+      border: '3px solid #8b6914',
+      borderRadius: '12px',
+      padding: '42px 54px',
+      maxWidth: '520px', width: '90%',
+      textAlign: 'center',
+      boxShadow: '0 0 60px rgba(139,105,20,.35)',
+    });
+
+    card.appendChild(el('div', { fontSize: '52px', marginBottom: '6px' }, '⚔'));
+    card.appendChild(el('h1', { color: '#c8a96e', fontSize: '32px', margin: '0 0 6px', textShadow: '0 0 18px #8b6914' }, 'Medieval Kingdom'));
+    card.appendChild(el('p', { color: '#a08050', fontSize: '14px', margin: '0 0 26px', letterSpacing: '2px' }, 'BUILD · CONQUER · SURVIVE'));
+
+    const controls = el('div', {
+      background: 'rgba(255,255,255,.05)', border: '1px solid #4a3210',
+      borderRadius: '8px', padding: '14px 18px', marginBottom: '28px',
+      fontSize: '12px', color: '#c8b890', lineHeight: '1.9', textAlign: 'left',
+    }, `<b style="color:#c8a96e;display:block;margin-bottom:6px">CONTROLS</b>
+        📍 RTS Mode — pan / build / manage units<br>
+        🎯 FPS Mode — walk around &amp; attack enemies<br>
+        <b style="color:#aaa">TAB</b> — switch mode &nbsp; <b style="color:#aaa">1-6</b> — place buildings<br>
+        <b style="color:#aaa">T</b> — train soldier &nbsp; <b style="color:#aaa">V</b> — train villager<br>
+        RTS: <b style="color:#aaa">click unit</b> to select · <b style="color:#aaa">right-click</b> to move`);
+    card.appendChild(controls);
+
+    const startBtn = el('button', {
+      background: 'linear-gradient(to bottom, #8b5e14, #5a3a08)',
+      border: '2px solid #c8a96e', borderRadius: '8px',
+      color: '#f8e8c0', fontSize: '18px', padding: '13px 42px',
+      cursor: 'pointer', fontFamily: "'Georgia',serif", letterSpacing: '1px',
+      transition: 'all 0.2s', pointerEvents: 'all',
+    }, '⚔ Begin Conquest');
+    startBtn.addEventListener('mouseenter', () => {
+      startBtn.style.background = 'linear-gradient(to bottom, #b07820, #7a4e12)';
+      startBtn.style.transform = 'scale(1.04)';
+    });
+    startBtn.addEventListener('mouseleave', () => {
+      startBtn.style.background = 'linear-gradient(to bottom, #8b5e14, #5a3a08)';
+      startBtn.style.transform = 'scale(1)';
+    });
+    startBtn.addEventListener('click', () => {
+      overlay.style.opacity = '0';
+      overlay.style.transition = 'opacity 0.6s';
+      setTimeout(() => { overlay.style.display = 'none'; }, 620);
+      this.game.startGame();
+    });
+    card.appendChild(startBtn);
+
+    overlay.appendChild(card);
+    document.getElementById('ui-root').appendChild(overlay);
+    this._startOverlay = overlay;
+    overlay.style.display = 'none'; // hidden until showStartScreen()
+  }
+
+  showStartScreen() {
+    if (this._startOverlay) this._startOverlay.style.display = 'flex';
+  }
+
+  // ── End screen ─────────────────────────────────────────────────────────────
+
+  _buildEndScreen() {
+    this._endOverlay = el('div', {
+      position: 'fixed', inset: '0',
+      background: 'rgba(0,0,0,.75)',
+      display: 'none', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'Georgia',serif", zIndex: '200', pointerEvents: 'all',
+    });
+
+    const card = el('div', {
+      background: 'rgba(10,5,2,.95)',
+      border: '3px solid #8b6914',
+      borderRadius: '12px',
+      padding: '48px 60px',
+      textAlign: 'center',
+      boxShadow: '0 0 80px rgba(139,105,20,.4)',
+      minWidth: '340px',
+    });
+
+    this._endIcon     = el('div', { fontSize: '64px', marginBottom: '8px' });
+    this._endTitle    = el('h1', { color: '#c8a96e', fontSize: '34px', margin: '0 0 8px', textShadow: '0 0 20px #8b6914' });
+    this._endSubtitle = el('p',  { color: '#a08050', fontSize: '15px', margin: '0 0 10px' });
+    this._endScore    = el('p',  { color: '#c8a96e', fontSize: '18px', margin: '0 0 28px', fontWeight: 'bold' });
+
+    const btn = el('button', {
+      background: 'linear-gradient(to bottom, #8b5e14, #5a3a08)',
+      border: '2px solid #c8a96e', borderRadius: '8px',
+      color: '#f8e8c0', fontSize: '16px', padding: '12px 38px',
+      cursor: 'pointer', fontFamily: "'Georgia',serif", letterSpacing: '1px',
+    }, '⟳ Play Again');
+    btn.addEventListener('click', () => location.reload());
+
+    card.append(this._endIcon, this._endTitle, this._endSubtitle, this._endScore, btn);
+    this._endOverlay.appendChild(card);
+    document.getElementById('ui-root').appendChild(this._endOverlay);
+  }
+
+  _showEndScreen(victory) {
+    this.game.state = GAME_STATES.OVER;
+    this._endIcon.textContent     = victory ? '🏆' : '💀';
+    this._endTitle.textContent    = victory ? 'Victory!' : 'Defeat';
+    this._endSubtitle.textContent = victory
+      ? 'All enemies have been conquered. Your legend lives on.'
+      : 'Your castle has fallen. The kingdom is no more.';
+    this._endScore.textContent = `Score: ${Math.floor(this.game.playerKingdom.score)}`;
+    this._endOverlay.style.display = 'flex';
+  }
+
+  // ── Minimap ────────────────────────────────────────────────────────────────
+
+  _buildMinimap() {
+    const SIZE = 168;
+    this._minimapCanvas = document.createElement('canvas');
+    this._minimapCanvas.width  = SIZE;
+    this._minimapCanvas.height = SIZE;
+    css(this._minimapCanvas, {
+      position: 'absolute', bottom: '10px', right: '10px',
+      border: '2px solid #8b6914', borderRadius: '5px',
+      opacity: '0.92', imageRendering: 'pixelated',
+    });
+    this._minimapCtx = this._minimapCanvas.getContext('2d');
+    document.getElementById('ui-root').appendChild(this._minimapCanvas);
+    this._minimapSize = SIZE;
+    this._prebakeMinimapTerrain();
+  }
+
+  _prebakeMinimapTerrain() {
+    const SIZE    = this._minimapSize;
+    const terrain = this.game.world.terrain;
+    const segs    = terrain.segs;
+    const img     = this._minimapCtx.createImageData(SIZE, SIZE);
+    const d       = img.data;
+    for (let py = 0; py < SIZE; py++) {
+      for (let px = 0; px < SIZE; px++) {
+        const col = Math.round(px / SIZE * segs);
+        const row = Math.round(py / SIZE * segs);
+        const h   = terrain.heightData[row]?.[col] ?? 0;
+        const [r, g, b] = this._hmapRGB(h);
+        const i = (py * SIZE + px) * 4;
+        d[i] = r; d[i+1] = g; d[i+2] = b; d[i+3] = 255;
+      }
+    }
+    const off = document.createElement('canvas');
+    off.width = SIZE; off.height = SIZE;
+    off.getContext('2d').putImageData(img, 0, 0);
+    this._minimapCache = off;
+  }
+
+  _hmapRGB(h) {
+    if (h < 0)  return [28, 82, 155];
+    if (h < 2)  return [194, 178, 122];
+    if (h < 8)  return [80, 150, 62];
+    if (h < 18) return [62, 115, 44];
+    if (h < 26) return [88, 112, 60];
+    if (h < 34) return [130, 100, 68];
+    if (h < 46) return [148, 148, 148];
+    return [215, 228, 240];
+  }
+
+  _updateMinimap() {
+    const ctx  = this._minimapCtx;
+    const SIZE = this._minimapSize;
+    const T    = this.game.world.terrain;
+
+    ctx.drawImage(this._minimapCache, 0, 0);
+
+    const w2m = (x, z) => [
+      (x / T.size + 0.5) * SIZE,
+      (z / T.size + 0.5) * SIZE,
+    ];
+
+    for (const k of this.game.kingdoms) {
+      ctx.fillStyle = K_COLORS[k.id];
+      for (const b of k.buildings) {
+        const [mx, my] = w2m(b.position.x, b.position.z);
+        ctx.fillRect(mx - 2.5, my - 2.5, 6, 6);
+      }
+      ctx.globalAlpha = 0.7;
+      for (const u of k.allUnits()) {
+        const [mx, my] = w2m(u.position.x, u.position.z);
+        ctx.fillRect(mx - 1, my - 1, 3, 3);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Camera view indicator
+    const p = this.game.player;
+    if (p.mode === 'rts') {
+      const [cx, cy] = w2m(p.rtsTarget.x, p.rtsTarget.z);
+      const vs = p.rtsHeight * 0.13;
+      ctx.strokeStyle = 'rgba(255,255,255,.75)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx - vs, cy - vs * 0.6, vs * 2, vs * 1.2);
+    } else {
+      const [cx, cy] = w2m(p.fpsPos.x, p.fpsPos.z);
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   updateMode(mode) {
     const isFPS = mode === 'fps';
     this.crosshair.style.display = isFPS ? 'block' : 'none';
     this.buildBar.style.display  = isFPS ? 'none'  : 'flex';
     this.fpsPanel.style.display  = isFPS ? 'block' : 'none';
-
     this.modeBox.innerHTML = isFPS
-      ? `<b style="font-size:15px">🎯 FPS Mode</b><br>Click to lock mouse<br>Left Click — Attack<br>TAB — RTS mode`
-      : `<b style="font-size:15px">📍 RTS Mode</b><br>WASD / edges — pan<br>Scroll — zoom<br>TAB — FPS mode<br>1-6 place buildings`;
+      ? `<b style="font-size:14px;color:#c8a96e">🎯 FPS Mode</b><br>Click canvas to lock<br>Left Click — attack<br>TAB — RTS mode`
+      : `<b style="font-size:14px;color:#c8a96e">📍 RTS Mode</b><br>WASD / edges — pan<br>Scroll — zoom<br>TAB — FPS mode<br>1-6 — buildings`;
   }
 
   showMsg(text, isErr = false) {
     this.msgBox.textContent = text;
-    this.msgBox.style.borderColor = isErr ? '#cc4444' : '#8b6914';
-    this.msgBox.style.opacity = '1';
+    css(this.msgBox, {
+      borderColor: isErr ? '#cc3333' : '#8b6914',
+      color: isErr ? '#ff9999' : '#f0e6c8',
+      opacity: '1',
+    });
     clearTimeout(this.msgTimer);
     this.msgTimer = setTimeout(() => { this.msgBox.style.opacity = '0'; }, 2800);
   }
 
   update(_delta) {
+    if (this.game.state !== GAME_STATES.PLAYING) return;
+
     const pk = this.game.playerKingdom;
     const r  = pk.resources;
 
+    // Resource bar
     this.resBar.innerHTML =
-      `<span style="color:#ffd700;font-weight:bold">⚜ YOUR KINGDOM</span>` +
-      `<span>🪵 ${Math.floor(r.wood??0)}</span>` +
-      `<span>🪨 ${Math.floor(r.stone??0)}</span>` +
-      `<span>🌾 ${Math.floor(r.food??0)}</span>` +
-      `<span>💰 ${Math.floor(r.gold??0)}</span>` +
-      `<span>⚙️ ${Math.floor(r.iron??0)}</span>`;
+      `<span style="color:#ffd700;font-weight:bold;margin-right:4px">⚜ ${pk.villagers.length + pk.soldiers.length} pop</span>` +
+      `<span>🪵 ${Math.floor(r.wood  ?? 0)}</span>` +
+      `<span>🪨 ${Math.floor(r.stone ?? 0)}</span>` +
+      `<span>🌾 ${Math.floor(r.food  ?? 0)}</span>` +
+      `<span>💰 ${Math.floor(r.gold  ?? 0)}</span>` +
+      `<span>⚙️ ${Math.floor(r.iron  ?? 0)}</span>` +
+      `<span style="color:#aaa;font-size:11px;margin-left:6px">Score ${Math.floor(pk.score)}</span>`;
 
-    const names  = ['Your Kingdom','Red Kingdom','Green Kingdom','Orange Kingdom'];
-    const clrs   = ['#88aaff','#ff8888','#88ee88','#ffcc55'];
-
+    // Kingdom overview
     this.overview.innerHTML =
-      `<div style="font-weight:bold;color:#ffd700;margin-bottom:5px">⚜ KINGDOMS</div>` +
+      `<div style="font-weight:bold;color:#c8a96e;margin-bottom:6px">⚜ KINGDOMS</div>` +
       this.game.kingdoms.map((k, i) => {
-        const dead = !k.isAlive();
-        return `<div style="${dead?'opacity:.35;text-decoration:line-through':''}margin:3px 0">
-          <span style="color:${clrs[i]}">■</span> ${names[i]}<br>
-          &nbsp; 🏠${k.buildings.length} ⚔️${k.getMilitary().length} 👤${k.villagers.length}
+        const alive = k.isAlive();
+        return `<div style="margin:4px 0;${alive ? '' : 'opacity:.35;text-decoration:line-through'}">
+          <span style="color:${K_COLORS[i]}">■</span> <b>${K_NAMES[i]}</b><br>
+          <span style="font-size:11px;opacity:.75">&nbsp;🏠${k.buildings.length} ⚔️${k.getMilitary().length} 👤${k.villagers.length}</span>
         </div>`;
-      }).join('') +
-      `<div style="margin-top:6px;opacity:.7;font-size:11px">Score: ${Math.floor(pk.score)}</div>`;
+      }).join('');
 
-    if (!pk.isAlive()) {
-      this.showMsg('⚔️ Your kingdom has fallen! (F5 to restart)', true);
-    } else if (this.game.kingdoms.filter((k,i)=>i>0&&k.isAlive()).length === 0) {
-      this.showMsg('🏆 Victory! All enemies defeated!');
+    // Selection hint
+    const sel = this.game.player.selected.filter(u => !u.isDead());
+    this.selHint.style.opacity = sel.length ? '1' : '0';
+    if (sel.length) this.selHint.textContent = `${sel.length} unit${sel.length > 1 ? 's' : ''} selected — right-click to move`;
+
+    // Minimap (update every 3 frames ≈ 50ms at 60fps — cheap enough)
+    this._minimapTimer++;
+    if (this._minimapTimer >= 3) { this._minimapTimer = 0; this._updateMinimap(); }
+
+    // Win / lose check (once)
+    if (!this._gameOver) {
+      if (!pk.isAlive()) {
+        this._gameOver = true;
+        this._showEndScreen(false);
+      } else if (this.game.kingdoms.filter((k, i) => i > 0 && k.isAlive()).length === 0) {
+        this._gameOver = true;
+        this._showEndScreen(true);
+      }
     }
   }
 }

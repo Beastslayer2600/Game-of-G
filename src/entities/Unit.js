@@ -9,12 +9,12 @@ export class Unit {
     this.kingdomColor = kingdomColor;
     this.kingdom      = kingdom;
 
-    const s       = UNIT_STATS[type] ?? UNIT_STATS.villager;
-    this.hp       = s.hp;
-    this.maxHp    = s.hp;
-    this.attack   = s.attack;
-    this.speed    = s.speed;
-    this.range    = s.range;
+    const s    = UNIT_STATS[type] ?? UNIT_STATS.villager;
+    this.hp    = s.hp;
+    this.maxHp = s.hp;
+    this.attack = s.attack;
+    this.speed  = s.speed;
+    this.range  = s.range;
 
     this.destination    = null;
     this.target         = null;
@@ -22,6 +22,8 @@ export class Unit {
     this.attackCooldown = 0;
     this.mesh           = null;
     this.hpBar          = null;
+    this._selectionRing = null;
+    this.isSelected     = false;
 
     this._build();
   }
@@ -59,9 +61,10 @@ export class Unit {
       helm.position.y = 1.8; g.add(helm);
     }
 
+    // HP bar background
     const bgBar = new THREE.Mesh(
       new THREE.PlaneGeometry(1,0.14),
-      new THREE.MeshBasicMaterial({ color: 0x333333, depthTest: false })
+      new THREE.MeshBasicMaterial({ color: 0x222222, depthTest: false })
     );
     bgBar.position.y = 2.5; bgBar.renderOrder = 1; g.add(bgBar);
 
@@ -71,9 +74,24 @@ export class Unit {
     );
     this.hpBar.position.set(0,2.5,0.01); this.hpBar.renderOrder = 2; g.add(this.hpBar);
 
+    // Selection ring (flat torus at feet, hidden by default)
+    this._selectionRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.9, 0.07, 4, 28),
+      new THREE.MeshBasicMaterial({ color: 0x00eeff, transparent: true, opacity: 0, depthTest: false })
+    );
+    this._selectionRing.rotation.x = Math.PI / 2;
+    this._selectionRing.position.y = 0.08;
+    this._selectionRing.renderOrder = 3;
+    g.add(this._selectionRing);
+
     g.position.copy(this.position);
     this.mesh = g;
     this.scene.add(g);
+  }
+
+  setSelected(v) {
+    this.isSelected = v;
+    if (this._selectionRing) this._selectionRing.material.opacity = v ? 0.85 : 0;
   }
 
   moveTo(dest) { this.destination = dest.clone(); this.state = 'moving'; }
@@ -85,10 +103,17 @@ export class Unit {
 
     this.attackCooldown = Math.max(0, this.attackCooldown - delta);
 
+    // HP bar update
     const f = this.hp / this.maxHp;
     this.hpBar.scale.x = Math.max(0, f);
     this.hpBar.position.x = (f - 1) * 0.5;
-    this.hpBar.material.color.setHex(f > 0.6 ? 0x00ff00 : f > 0.3 ? 0xffff00 : 0xff3300);
+    this.hpBar.material.color.setHex(f > 0.6 ? 0x00ff00 : f > 0.3 ? 0xffdd00 : 0xff2200);
+
+    // Selection ring pulse
+    if (this.isSelected && this._selectionRing) {
+      const pulse = 0.65 + 0.35 * Math.sin(performance.now() * 0.004);
+      this._selectionRing.material.opacity = pulse;
+    }
 
     if (this.state === 'moving' && this.destination) {
       this._moveTowards(this.destination, delta, world);
@@ -98,9 +123,7 @@ export class Unit {
     }
 
     if (this.state === 'attacking' && this.target) {
-      const tPos = this.target.position ??
-                   this.target.mesh?.position ??
-                   new THREE.Vector3();
+      const tPos = this.target.position ?? this.target.mesh?.position ?? new THREE.Vector3();
       if (!this.target.hp || this.target.hp <= 0) {
         this.target = null; this.state = 'idle'; return;
       }
@@ -134,6 +157,7 @@ export class Unit {
 
   _die() {
     this.hp = 0; this.state = 'dead';
+    if (this.isSelected) this.setSelected(false);
     if (this.mesh) {
       this.mesh.rotation.z = Math.PI / 2;
       setTimeout(() => { if (this.mesh) { this.scene.remove(this.mesh); this.mesh = null; } }, 3000);
