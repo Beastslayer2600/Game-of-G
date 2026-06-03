@@ -11,6 +11,7 @@ export class Kingdom {
     this.id       = id;
     this.color    = color;
     this.position = startPos.clone();
+    this.allKingdoms = null;
 
     this.resources = { wood: 300, stone: 200, food: 300, gold: 100, iron: 50 };
 
@@ -20,6 +21,8 @@ export class Kingdom {
 
     this._init();
   }
+
+  setKingdoms(list) { this.allKingdoms = list; }
 
   _init() {
     const y = this.world.getHeightAt(this.position.x, this.position.z);
@@ -88,10 +91,10 @@ export class Kingdom {
     return this.addSoldier(type, pos);
   }
 
-  getCastle()      { return this.buildings.find(b => b.type === 'castle' && !b.isDestroyed()); }
-  getMilitary()    { return this.soldiers.filter(u => !u.isDead()); }
-  allUnits()       { return [...this.villagers, ...this.soldiers]; }
-  isAlive()        { return !!this.getCastle(); }
+  getCastle()   { return this.buildings.find(b => b.type === 'castle' && !b.isDestroyed()); }
+  getMilitary() { return this.soldiers.filter(u => !u.isDead()); }
+  allUnits()    { return [...this.villagers, ...this.soldiers]; }
+  isAlive()     { return !!this.getCastle(); }
 
   update(delta) {
     this.buildings = this.buildings.filter(b => !b.isDestroyed());
@@ -109,15 +112,56 @@ export class Kingdom {
       }
     }
 
+    // Ballista towers auto-attack nearby enemies
+    if (this.allKingdoms) {
+      for (const b of this.buildings) {
+        if (b.type !== 'ballista_tower') continue;
+        b.attackCooldown -= delta;
+        if (b.attackCooldown > 0) continue;
+        let target = null, bestDist = 48;
+        for (const k of this.allKingdoms) {
+          if (k === this) continue;
+          for (const u of k.allUnits()) {
+            if (u.isDead()) continue;
+            const d = b.position.distanceTo(u.position);
+            if (d < bestDist) { bestDist = d; target = u; }
+          }
+        }
+        if (target) {
+          target.takeDamage(22 + Math.random() * 10);
+          b.attackCooldown = 3.5;
+        }
+      }
+    }
+
     this.resources.food = Math.max(0,
       (this.resources.food ?? 0) - this.allUnits().length * 0.015 * delta
     );
   }
 
   _produce(b) {
-    const map = { farm: ['food',20], lumbermill: ['wood',12], quarry: ['stone',8],
-                  market: ['gold',4], castle: ['food',3] };
+    const map = {
+      farm:        ['food',  20],
+      lumbermill:  ['wood',  12],
+      quarry:      ['stone',  8],
+      market:      ['gold',   4],
+      marketplace: ['gold',  10],
+      castle:      ['food',   3],
+      blacksmith:  ['iron',   6],
+      windmill:    ['food',  15],
+      tavern:      ['food',   5],
+      well:        ['food',   3],
+      manor:       ['gold',   4],
+      granary:     ['food',  25],
+      stables:     ['food',   2],
+    };
     const p = map[b.type];
     if (p) this.resources[p[0]] = (this.resources[p[0]] ?? 0) + p[1];
+    if (b.type === 'townhall') {
+      this.resources.wood  = (this.resources.wood  ?? 0) + 5;
+      this.resources.stone = (this.resources.stone ?? 0) + 3;
+      this.resources.food  = (this.resources.food  ?? 0) + 5;
+      this.resources.gold  = (this.resources.gold  ?? 0) + 8;
+    }
   }
 }

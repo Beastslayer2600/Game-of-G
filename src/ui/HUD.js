@@ -19,6 +19,40 @@ const PANEL = { ...BASE, position: 'absolute' };
 const K_COLORS = ['#88aaff', '#ff7777', '#77dd77', '#ffcc44'];
 const K_NAMES  = ['Your Kingdom', 'Red Kingdom', 'Green Kingdom', 'Orange Kingdom'];
 
+const TABS = {
+  '🌾 Economy': [
+    { type: 'farm',        icon: '🌾', key: '1' },
+    { type: 'lumbermill',  icon: '🪵', key: '2' },
+    { type: 'quarry',      icon: '⛏',  key: '3' },
+    { type: 'windmill',    icon: '💨', key: '' },
+    { type: 'market',      icon: '🛒', key: '' },
+    { type: 'marketplace', icon: '🏪', key: '' },
+    { type: 'granary',     icon: '🌽', key: '' },
+    { type: 'blacksmith',  icon: '🔨', key: '' },
+    { type: 'well',        icon: '💧', key: '' },
+  ],
+  '🏙 City': [
+    { type: 'house',       icon: '🏠', key: '6' },
+    { type: 'tavern',      icon: '🍺', key: '' },
+    { type: 'stables',     icon: '🐎', key: '' },
+    { type: 'manor',       icon: '🏰', key: '' },
+    { type: 'townhall',    icon: '🏛', key: '' },
+    { type: 'cathedral',   icon: '⛪', key: '' },
+  ],
+  '⚔ Military': [
+    { type: 'barracks',    icon: '⚔️', key: '4' },
+    { type: 'tower',       icon: '🗼', key: '5' },
+    { type: 'ballista_tower', icon: '🎯', key: '' },
+    null, // train section
+  ],
+  '🛡 Defense': [
+    { type: 'wall',           icon: '🧱', key: '' },
+    { type: 'fortress_wall',  icon: '🏯', key: '' },
+    { type: 'palisade',       icon: '🪧', key: '' },
+    { type: 'gatehouse',      icon: '🚪', key: '' },
+  ],
+};
+
 export class HUD {
   constructor(game) {
     this.game      = game;
@@ -59,10 +93,11 @@ export class HUD {
     });
     root.appendChild(this.overview);
 
-    // Build / train bar (bottom center)
+    // Build bar (bottom center) — column layout for tab system
     this.buildBar = el('div', {
       ...PANEL, bottom: '10px', left: '50%', transform: 'translateX(-50%)',
-      padding: '8px 12px', display: 'flex', gap: '7px', pointerEvents: 'all',
+      padding: '6px 10px 8px', display: 'flex', flexDirection: 'column',
+      gap: '0', pointerEvents: 'all', maxWidth: '96vw',
     });
     this._populateBuildBar();
     root.appendChild(this.buildBar);
@@ -85,15 +120,15 @@ export class HUD {
 
     // Toast message
     this.msgBox = el('div', {
-      ...PANEL, bottom: '90px', left: '50%', transform: 'translateX(-50%)',
+      ...PANEL, bottom: '120px', left: '50%', transform: 'translateX(-50%)',
       padding: '10px 24px', fontSize: '16px',
       opacity: '0', transition: 'opacity 0.25s', pointerEvents: 'none',
     });
     root.appendChild(this.msgBox);
 
-    // Deselect hint (above build bar, only in RTS when units selected)
+    // Selection hint
     this.selHint = el('div', {
-      position: 'absolute', bottom: '75px', left: '50%', transform: 'translateX(-50%)',
+      position: 'absolute', bottom: '110px', left: '50%', transform: 'translateX(-50%)',
       color: '#00eeff', fontSize: '12px', textShadow: '0 0 6px #00aabb',
       opacity: '0', transition: 'opacity 0.3s', pointerEvents: 'none',
     });
@@ -104,12 +139,12 @@ export class HUD {
 
   _btn(icon, label, sub, onClick, borderColor = '#8b6914') {
     const b = document.createElement('button');
-    b.innerHTML = `<div style="font-size:16px">${icon} ${label}</div><div style="font-size:10px;opacity:.6;margin-top:2px">${sub}</div>`;
+    b.innerHTML = `<div style="font-size:14px;line-height:1.2">${icon} ${label}</div><div style="font-size:9px;opacity:.6;margin-top:2px">${sub}</div>`;
     css(b, {
       background: 'rgba(35,22,6,.92)', border: `1px solid ${borderColor}`,
-      color: '#f0e6c8', padding: '7px 10px', borderRadius: '6px',
-      cursor: 'pointer', fontFamily: "'Georgia',serif", textAlign: 'center', minWidth: '72px',
-      transition: 'background 0.15s, transform 0.1s',
+      color: '#f0e6c8', padding: '5px 8px', borderRadius: '5px',
+      cursor: 'pointer', fontFamily: "'Georgia',serif", textAlign: 'center', minWidth: '68px',
+      transition: 'background 0.15s, transform 0.1s', flexShrink: '0',
     });
     b.addEventListener('mouseenter', () => { b.style.background = 'rgba(80,55,16,.95)'; b.style.transform = 'translateY(-2px)'; });
     b.addEventListener('mouseleave', () => { b.style.background = 'rgba(35,22,6,.92)'; b.style.transform = 'translateY(0)'; });
@@ -118,35 +153,89 @@ export class HUD {
   }
 
   _populateBuildBar() {
-    const buildings = [
-      { type:'farm',       icon:'🌾', key:'1' },
-      { type:'lumbermill', icon:'🪵', key:'2' },
-      { type:'quarry',     icon:'⛏',  key:'3' },
-      { type:'barracks',   icon:'⚔️', key:'4' },
-      { type:'tower',      icon:'🗼', key:'5' },
-      { type:'house',      icon:'🏠', key:'6' },
-    ];
-    for (const b of buildings) {
-      const cost    = BUILDING_COSTS[b.type];
-      const costStr = Object.entries(cost).map(([r, v]) => `${r[0].toUpperCase()}:${v}`).join(' ');
-      const btn = this._btn(b.icon, b.type, `[${b.key}] ${costStr}`, () => {
-        this.game.player._startBuild(b.type);
+    // Tab row
+    const tabRow = el('div', { display: 'flex', gap: '3px', marginBottom: '5px' });
+    this.buildBar.appendChild(tabRow);
+
+    // Button row (scrollable)
+    const btnRow = el('div', {
+      display: 'flex', gap: '5px', overflowX: 'auto', alignItems: 'center',
+      paddingBottom: '2px',
+    });
+    // Hide scrollbar visually
+    btnRow.style.scrollbarWidth = 'none';
+    this.buildBar.appendChild(btnRow);
+
+    const tabNames = Object.keys(TABS);
+    const tabBtns  = {};
+    let activeTab  = tabNames[0];
+
+    const renderTab = (name) => {
+      activeTab = name;
+      btnRow.innerHTML = '';
+      for (const [tn, tb] of Object.entries(tabBtns)) {
+        tb.style.background = tn === name ? 'rgba(139,105,20,.9)' : 'rgba(30,18,6,.88)';
+        tb.style.color      = tn === name ? '#ffe8a0' : '#c0a870';
+        tb.style.borderBottomColor = tn === name ? 'transparent' : '#6a4a10';
+      }
+
+      for (const item of TABS[name]) {
+        if (item === null) {
+          // Divider
+          const div = el('div', { width: '1px', height: '44px', background: '#4a3210', flexShrink: '0' });
+          btnRow.appendChild(div);
+          // Train buttons
+          const trainData = [
+            { type:'soldier', icon:'⚔️', label:'Soldier', key:'T', costs:'F:75 G:25', border:'#cc4444' },
+            { type:'villager',icon:'👤', label:'Villager', key:'V', costs:'F:50',      border:'#44cc44' },
+            { type:'archer',  icon:'🏹', label:'Archer',  key:'',  costs:'F:60 W:25', border:'#cc8844' },
+            { type:'knight',  icon:'🛡', label:'Knight',  key:'',  costs:'F:100 G:75',border:'#8844cc' },
+          ];
+          for (const t of trainData) {
+            const sub = t.key ? `[${t.key}] ${t.costs}` : t.costs;
+            btnRow.appendChild(this._btn(t.icon, t.label, sub, () => {
+              const u = this.game.playerKingdom.tryTrain(t.type);
+              this.showMsg(u ? `${t.label} trained!` : 'Not enough resources!', !u);
+            }, t.border));
+          }
+          continue;
+        }
+        const cost    = BUILDING_COSTS[item.type];
+        const resAbbr = { wood:'W', stone:'S', food:'F', gold:'G', iron:'I' };
+        const costStr = Object.entries(cost).map(([r,v]) => `${resAbbr[r]??r[0].toUpperCase()}:${v}`).join(' ');
+        const sub = item.key ? `[${item.key}] ${costStr}` : costStr;
+        const label = item.type.replace(/_/g,' ');
+        btnRow.appendChild(this._btn(item.icon, label, sub, () => {
+          this.game.player._startBuild(item.type);
+        }));
+      }
+    };
+
+    for (const name of tabNames) {
+      const tb = document.createElement('button');
+      tb.textContent = name;
+      css(tb, {
+        background: 'rgba(30,18,6,.88)',
+        border: '1px solid #6a4a10',
+        borderBottom: '1px solid #6a4a10',
+        color: '#c0a870',
+        padding: '4px 10px',
+        borderRadius: '5px 5px 0 0',
+        cursor: 'pointer',
+        fontFamily: "'Georgia',serif",
+        fontSize: '12px',
+        transition: 'background 0.15s',
+        whiteSpace: 'nowrap',
       });
-      this.buildBar.appendChild(btn);
+      tb.addEventListener('click', () => renderTab(name));
+      tabRow.appendChild(tb);
+      tabBtns[name] = tb;
     }
 
-    this.buildBar.appendChild(this._btn('⚔️', 'Soldier', '[T] F:75 G:25', () => {
-      const u = this.game.playerKingdom.tryTrain('soldier');
-      this.showMsg(u ? 'Soldier trained!' : 'Not enough resources!', !u);
-    }, '#cc4444'));
-
-    this.buildBar.appendChild(this._btn('👤', 'Villager', '[V] F:50', () => {
-      const u = this.game.playerKingdom.tryTrain('villager');
-      this.showMsg(u ? 'Villager trained!' : 'Need 50 food!', !u);
-    }, '#44cc44'));
+    renderTab(tabNames[0]);
   }
 
-  // ── Start screen ───────────────────────────────────────────────────────────
+  // ── Start screen ──────────────────────────────────────────────────────────
 
   _buildStartScreen() {
     const overlay = el('div', {
@@ -161,7 +250,7 @@ export class HUD {
       border: '3px solid #8b6914',
       borderRadius: '12px',
       padding: '42px 54px',
-      maxWidth: '520px', width: '90%',
+      maxWidth: '540px', width: '90%',
       textAlign: 'center',
       boxShadow: '0 0 60px rgba(139,105,20,.35)',
     });
@@ -175,11 +264,14 @@ export class HUD {
       borderRadius: '8px', padding: '14px 18px', marginBottom: '28px',
       fontSize: '12px', color: '#c8b890', lineHeight: '1.9', textAlign: 'left',
     }, `<b style="color:#c8a96e;display:block;margin-bottom:6px">CONTROLS</b>
-        📍 RTS Mode — pan / build / manage units<br>
-        🎯 FPS Mode — walk around &amp; attack enemies<br>
-        <b style="color:#aaa">TAB</b> — switch mode &nbsp; <b style="color:#aaa">1-6</b> — place buildings<br>
-        <b style="color:#aaa">T</b> — train soldier &nbsp; <b style="color:#aaa">V</b> — train villager<br>
-        RTS: <b style="color:#aaa">click unit</b> to select · <b style="color:#aaa">right-click</b> to move`);
+        📍 RTS — pan camera &amp; manage city<br>
+        🎯 FPS — walk around &amp; attack enemies<br>
+        <b style="color:#aaa">TAB</b> — switch mode &nbsp;
+        <b style="color:#aaa">1-6</b> — quick buildings<br>
+        <b style="color:#aaa">T</b> — train soldier &nbsp;
+        <b style="color:#aaa">V</b> — train villager<br>
+        RTS: <b style="color:#aaa">click</b> to select unit ·
+        <b style="color:#aaa">right-click</b> to move/cancel build`);
     card.appendChild(controls);
 
     const startBtn = el('button', {
@@ -208,14 +300,14 @@ export class HUD {
     overlay.appendChild(card);
     document.getElementById('ui-root').appendChild(overlay);
     this._startOverlay = overlay;
-    overlay.style.display = 'none'; // hidden until showStartScreen()
+    overlay.style.display = 'none';
   }
 
   showStartScreen() {
     if (this._startOverlay) this._startOverlay.style.display = 'flex';
   }
 
-  // ── End screen ─────────────────────────────────────────────────────────────
+  // ── End screen ────────────────────────────────────────────────────────────
 
   _buildEndScreen() {
     this._endOverlay = el('div', {
@@ -236,9 +328,9 @@ export class HUD {
     });
 
     this._endIcon     = el('div', { fontSize: '64px', marginBottom: '8px' });
-    this._endTitle    = el('h1', { color: '#c8a96e', fontSize: '34px', margin: '0 0 8px', textShadow: '0 0 20px #8b6914' });
-    this._endSubtitle = el('p',  { color: '#a08050', fontSize: '15px', margin: '0 0 10px' });
-    this._endScore    = el('p',  { color: '#c8a96e', fontSize: '18px', margin: '0 0 28px', fontWeight: 'bold' });
+    this._endTitle    = el('h1',  { color: '#c8a96e', fontSize: '34px', margin: '0 0 8px', textShadow: '0 0 20px #8b6914' });
+    this._endSubtitle = el('p',   { color: '#a08050', fontSize: '15px', margin: '0 0 10px' });
+    this._endScore    = el('p',   { color: '#c8a96e', fontSize: '18px', margin: '0 0 28px', fontWeight: 'bold' });
 
     const btn = el('button', {
       background: 'linear-gradient(to bottom, #8b5e14, #5a3a08)',
@@ -264,7 +356,7 @@ export class HUD {
     this._endOverlay.style.display = 'flex';
   }
 
-  // ── Minimap ────────────────────────────────────────────────────────────────
+  // ── Minimap ───────────────────────────────────────────────────────────────
 
   _buildMinimap() {
     const SIZE = 168;
@@ -341,7 +433,6 @@ export class HUD {
       ctx.globalAlpha = 1;
     }
 
-    // Camera view indicator
     const p = this.game.player;
     if (p.mode === 'rts') {
       const [cx, cy] = w2m(p.rtsTarget.x, p.rtsTarget.z);
@@ -358,7 +449,7 @@ export class HUD {
     }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   updateMode(mode) {
     const isFPS = mode === 'fps';
@@ -367,7 +458,7 @@ export class HUD {
     this.fpsPanel.style.display  = isFPS ? 'block' : 'none';
     this.modeBox.innerHTML = isFPS
       ? `<b style="font-size:14px;color:#c8a96e">🎯 FPS Mode</b><br>Click canvas to lock<br>Left Click — attack<br>TAB — RTS mode`
-      : `<b style="font-size:14px;color:#c8a96e">📍 RTS Mode</b><br>WASD / edges — pan<br>Scroll — zoom<br>TAB — FPS mode<br>1-6 — buildings`;
+      : `<b style="font-size:14px;color:#c8a96e">📍 RTS Mode</b><br>WASD / edges — pan<br>Scroll — zoom<br>TAB — FPS mode<br>1-6 — quick build<br>Tabs — all buildings`;
   }
 
   showMsg(text, isErr = false) {
@@ -387,7 +478,6 @@ export class HUD {
     const pk = this.game.playerKingdom;
     const r  = pk.resources;
 
-    // Resource bar
     this.resBar.innerHTML =
       `<span style="color:#ffd700;font-weight:bold;margin-right:4px">⚜ ${pk.villagers.length + pk.soldiers.length} pop</span>` +
       `<span>🪵 ${Math.floor(r.wood  ?? 0)}</span>` +
@@ -397,7 +487,6 @@ export class HUD {
       `<span>⚙️ ${Math.floor(r.iron  ?? 0)}</span>` +
       `<span style="color:#aaa;font-size:11px;margin-left:6px">Score ${Math.floor(pk.score)}</span>`;
 
-    // Kingdom overview
     this.overview.innerHTML =
       `<div style="font-weight:bold;color:#c8a96e;margin-bottom:6px">⚜ KINGDOMS</div>` +
       this.game.kingdoms.map((k, i) => {
@@ -408,16 +497,13 @@ export class HUD {
         </div>`;
       }).join('');
 
-    // Selection hint
     const sel = this.game.player.selected.filter(u => !u.isDead());
     this.selHint.style.opacity = sel.length ? '1' : '0';
     if (sel.length) this.selHint.textContent = `${sel.length} unit${sel.length > 1 ? 's' : ''} selected — right-click to move`;
 
-    // Minimap (update every 3 frames ≈ 50ms at 60fps — cheap enough)
     this._minimapTimer++;
     if (this._minimapTimer >= 3) { this._minimapTimer = 0; this._updateMinimap(); }
 
-    // Win / lose check (once)
     if (!this._gameOver) {
       if (!pk.isAlive()) {
         this._gameOver = true;
