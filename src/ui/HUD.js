@@ -1,4 +1,5 @@
 import { BUILDING_COSTS, BUILDING_AGE, AGES, AGE_ADVANCE_COSTS, GAME_STATES } from '../constants.js';
+import { UnitDmgEvents } from '../entities/Unit.js';
 
 const css = (el, s) => Object.assign(el.style, s);
 const el  = (tag, s = {}, html = '') => {
@@ -109,8 +110,17 @@ export class HUD {
     this.fpsPanel = el('div', {
       ...PANEL, bottom: '90px', left: '10px', padding: '8px 12px', fontSize: '11px',
       lineHeight: '1.8', display: 'none',
-    }, 'WASD — Move<br>Mouse — Look<br>Click — Attack<br>TAB — RTS mode<br>ESC — Unlock mouse');
+    }, 'WASD — Move<br>Mouse — Look<br>Click — Attack<br>TAB — RTS mode<br>ESC — Unlock mouse<br><span style="color:#00eeff">C — Possess selected unit</span>');
     root.appendChild(this.fpsPanel);
+
+    // Combat log (bottom left, above FPS panel)
+    this.combatLog = el('div', {
+      position: 'absolute', bottom: '220px', left: '10px',
+      fontSize: '11px', color: '#ffcc88', textShadow: '1px 1px 3px #000',
+      pointerEvents: 'none', lineHeight: '1.7', opacity: '0.85',
+    });
+    root.appendChild(this.combatLog);
+    this._logLines = [];
 
     // Crosshair
     this.crosshair = el('div', {
@@ -445,20 +455,46 @@ export class HUD {
       (z / T.size + 0.5) * SIZE,
     ];
 
+    // Resource nodes (faint dots)
+    ctx.globalAlpha = 0.5;
+    for (const n of this.game.world.resourceNodes) {
+      if (n.isDepleted()) continue;
+      const [mx, my] = w2m(n.position.x, n.position.z);
+      ctx.fillStyle = n.type === 'wood' ? '#3a7a2a' : n.type === 'stone' ? '#aaaaaa'
+                    : n.type === 'iron' ? '#8888ff' : '#ffd700';
+      ctx.fillRect(mx - 1, my - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    // Animals
+    for (const a of this.game.world.animals) {
+      if (a.isDead()) continue;
+      const [mx, my] = w2m(a.position.x, a.position.z);
+      ctx.fillStyle = a.type === 'deer' ? '#c8a030' : a.type === 'wolf' ? '#888888' : '#6b3a1f';
+      ctx.globalAlpha = 0.75;
+      ctx.fillRect(mx - 1, my - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    // Kingdoms
     for (const k of this.game.kingdoms) {
       ctx.fillStyle = K_COLORS[k.id];
       for (const b of k.buildings) {
+        if (b.isDestroyed()) continue;
         const [mx, my] = w2m(b.position.x, b.position.z);
-        ctx.fillRect(mx - 2.5, my - 2.5, 6, 6);
+        const sz = b.type === 'castle' ? 5 : 3;
+        ctx.fillRect(mx - sz/2, my - sz/2, sz, sz);
       }
-      ctx.globalAlpha = 0.7;
+      ctx.globalAlpha = 0.75;
       for (const u of k.allUnits()) {
+        if (u.isDead()) continue;
         const [mx, my] = w2m(u.position.x, u.position.z);
-        ctx.fillRect(mx - 1, my - 1, 3, 3);
+        ctx.fillRect(mx - 1, my - 1, 2, 2);
       }
       ctx.globalAlpha = 1;
     }
 
+    // Camera / player
     const p = this.game.player;
     if (p.mode === 'rts') {
       const [cx, cy] = w2m(p.rtsTarget.x, p.rtsTarget.z);
@@ -467,7 +503,8 @@ export class HUD {
       ctx.lineWidth = 1;
       ctx.strokeRect(cx - vs, cy - vs * 0.6, vs * 2, vs * 1.2);
     } else {
-      const [cx, cy] = w2m(p.fpsPos.x, p.fpsPos.z);
+      const pos = p.possessedUnit ? p.possessedUnit.position : p.fpsPos;
+      const [cx, cy] = w2m(pos.x, pos.z);
       ctx.fillStyle = 'white';
       ctx.beginPath();
       ctx.arc(cx, cy, 3, 0, Math.PI * 2);
@@ -641,6 +678,7 @@ export class HUD {
     }
 
     this._updateAgePanel();
+    this._renderDamageNumbers();
     this._minimapTimer++;
     if (this._minimapTimer >= 3) { this._minimapTimer = 0; this._updateMinimap(); }
 
@@ -653,5 +691,51 @@ export class HUD {
         this._showEndScreen(true);
       }
     }
+  }
+
+  _renderDamageNumbers() {
+    const cam    = this.game.player.camera;
+    const W      = window.innerWidth;
+    const H      = window.innerHeight;
+    const events = UnitDmgEvents;
+
+    for (const ev of events) {
+      ev.t += 0.016;
+      ev.pos.y += 1.2 * 0.016;
+      if (!ev.el) {
+        ev.el = document.createElement('div');
+        ev.el.style.cssText =
+          'position:fixed;pointer-events:none;z-index:450;font-size:17px;font-weight:bold;' +
+          'font-family:Georgia,serif;text-shadow:1px 1px 3px #000;transition:none;';
+        document.body.appendChild(ev.el);
+      }
+      const proj = ev.pos.clone().project(cam);
+      if (proj.z > 1) { ev.el.style.opacity = '0'; continue; }
+      const x = (proj.x * 0.5 + 0.5) * W;
+      const y = (-proj.y * 0.5 + 0.5) * H;
+      const alpha = Math.max(0, 1 - ev.t * 1.4);
+      ev.el.style.left    = x + 'px';
+      ev.el.style.top     = y + 'px';
+      ev.el.style.opacity = alpha;
+      ev.el.style.color   = ev.dmg > 15 ? '#ff2200' : '#ff8844';
+      ev.el.textContent   = '-' + ev.dmg;
+    }
+
+    // Cleanup expired
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].t > 0.8) {
+        if (events[i].el) document.body.removeChild(events[i].el);
+        events.splice(i, 1);
+      }
+    }
+  }
+
+  addCombatLog(msg) {
+    const now = Date.now();
+    this._logLines.push({ msg, time: now });
+    this._logLines = this._logLines.filter(l => now - l.time < 8000).slice(-5);
+    this.combatLog.innerHTML = this._logLines.map(l =>
+      `<div style="text-shadow:1px 1px 3px #000">${l.msg}</div>`
+    ).join('');
   }
 }

@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { UNIT_STATS } from '../constants.js';
 
+// Shared registry — HUD reads this to render floating damage numbers each frame
+const _dmgEvents = [];
+export { _dmgEvents as UnitDmgEvents };
+
 export class Unit {
   constructor(scene, type, position, kingdomColor, kingdom) {
     this.scene        = scene;
@@ -163,6 +167,19 @@ export class Unit {
 
   takeDamage(dmg) {
     this.hp -= dmg;
+    // Queue floating number for HUD
+    _dmgEvents.push({ pos: this.position.clone().add(new THREE.Vector3(0, 2.2, 0)), dmg: Math.ceil(dmg), t: 0 });
+    // Brief red flash
+    if (this.mesh) {
+      this.mesh.children.forEach(c => {
+        if (c.material) { c.material.emissive?.setHex(0xcc1100); c.material.emissiveIntensity = 1; }
+      });
+      setTimeout(() => {
+        if (this.mesh) this.mesh.children.forEach(c => {
+          if (c.material) { c.material.emissive?.setHex(0x000000); c.material.emissiveIntensity = 0; }
+        });
+      }, 150);
+    }
     if (this.hp <= 0) { this._die(); return true; }
     return false;
   }

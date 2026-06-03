@@ -155,6 +155,17 @@ export class Kingdom {
     this.resources.food = Math.max(0,
       (this.resources.food ?? 0) - this.allUnits().length * 0.015 * delta
     );
+
+    // Slow HP regen near castle when food available
+    const castle = this.getCastle();
+    if (castle && (this.resources.food ?? 0) > 30) {
+      for (const u of this.allUnits()) {
+        if (u.isDead() || u.hp >= u.maxHp) continue;
+        if (u.position.distanceTo(castle.position) < 20) {
+          u.hp = Math.min(u.maxHp, u.hp + 2 * delta);
+        }
+      }
+    }
   }
 
   _produce(b) {

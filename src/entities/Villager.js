@@ -3,15 +3,17 @@ import { Unit } from './Unit.js';
 export class Villager extends Unit {
   constructor(scene, position, kingdomColor, kingdom) {
     super(scene, 'villager', position, kingdomColor, kingdom);
-    this.carryAmt    = 0;
-    this.carryMax    = 20;
-    this.carryType   = null;
-    this.targetNode  = null;
-    this.homePos     = position.clone();
+    this.carryAmt     = 0;
+    this.carryMax     = 20;
+    this.carryType    = null;
+    this.targetNode   = null;
+    this.homePos      = position.clone();
     this.harvestTimer = 0;
+    this._fleeTimer   = 0;
   }
 
   assignToResource(node) {
+    if (!node || node.isDepleted()) return;
     this.targetNode = node;
     this.carryType  = node.type;
     this.state      = 'goingToResource';
@@ -19,6 +21,15 @@ export class Villager extends Unit {
   }
 
   update(delta, world) {
+    // Self-preservation: check for threats before doing anything else
+    if (!this.isPossessed && !this.isDead()) {
+      this._fleeTimer -= delta;
+      if (this._fleeTimer <= 0) {
+        this._fleeTimer = 0.5; // check every 0.5s
+        this._checkThreats();
+      }
+    }
+
     super.update(delta, world);
     if (this.isDead()) return;
 
@@ -32,7 +43,7 @@ export class Villager extends Unit {
 
       case 'harvesting':
         this.harvestTimer += delta;
-        if (this.harvestTimer >= 2) {
+        if (this.harvestTimer >= 1.8) {
           this.harvestTimer = 0;
           if (this.targetNode && !this.targetNode.isDepleted()) {
             this.carryAmt += this.targetNode.harvest(6);
@@ -61,6 +72,30 @@ export class Villager extends Unit {
           }
         }
         break;
+    }
+  }
+
+  _checkThreats() {
+    if (!this.kingdom?.allKingdoms) return;
+    const FLEE_RANGE = 11;
+    let threat = null, threatDist = FLEE_RANGE;
+
+    for (const k of this.kingdom.allKingdoms) {
+      if (k === this.kingdom) continue;
+      for (const u of k.getMilitary()) {
+        if (u.isDead()) continue;
+        const d = this.position.distanceTo(u.position);
+        if (d < threatDist) { threatDist = d; threat = u.position; }
+      }
+    }
+
+    if (threat) {
+      const castle = this.kingdom.getCastle();
+      if (castle) {
+        this.carryAmt = 0; // drop cargo to run faster
+        this.state = 'moving';
+        this.destination = castle.position.clone();
+      }
     }
   }
 }
