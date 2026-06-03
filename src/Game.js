@@ -154,8 +154,11 @@ export class Game {
   _loop() {
     const delta = Math.min(this.clock.getDelta(), 0.05);
 
-    // Always update world visuals (water, clouds) even on menu
-    this.world.update(delta);
+    const fpsPos = this.player?.possessedUnit
+      ? this.player.possessedUnit.position
+      : (this.player?.mode === 'fps' ? this.player.fpsPos : null);
+
+    this.world.update(delta, this.kingdoms, fpsPos);
 
     if (this.state === GAME_STATES.PLAYING) {
       this.elapsedTime += delta;

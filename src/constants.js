@@ -2,6 +2,44 @@ export const WORLD_SIZE = 512;
 export const TERRAIN_SEGMENTS = 200;
 export const TERRAIN_MAX_HEIGHT = 55;
 
+// ── Ages ──────────────────────────────────────────────────────────────────────
+export const AGES = [
+  { name: 'Tribal Age',    icon: '🪨', color: '#a0885a' },
+  { name: 'Iron Age',      icon: '⚔️', color: '#a0a8b8' },
+  { name: 'Medieval Age',  icon: '🏰', color: '#c8a96e' },
+  { name: 'Renaissance',   icon: '🎨', color: '#d4af37' },
+];
+
+export const AGE_ADVANCE_COSTS = [
+  null,
+  { wood: 350, stone: 200, food: 150 },
+  { stone: 400, iron: 150, gold: 150, wood: 150 },
+  { stone: 600, gold: 400, iron: 300 },
+];
+
+// Min age required to construct a building
+export const BUILDING_AGE = {
+  // Tribal (0)
+  farm: 0, house: 0, lumbermill: 0, quarry: 0, well: 0, palisade: 0, castle: 0, tower: 0,
+  // Iron (1)
+  barracks: 1, wall: 1, blacksmith: 1, granary: 1, stables: 1,
+  // Medieval (2)
+  market: 2, marketplace: 2, manor: 2, tavern: 2, windmill: 2,
+  fortress_wall: 2, gatehouse: 2, ballista_tower: 2,
+  // Renaissance (3)
+  cathedral: 3, townhall: 3,
+};
+
+export const UNIT_AGE = { villager: 0, soldier: 1, archer: 1, knight: 2 };
+
+// Building required to train a unit type (null = just need enough food)
+export const UNIT_BUILDING_REQ = {
+  soldier: 'barracks',
+  archer:  'barracks',
+  knight:  'stables',
+};
+
+// ── Buildings ─────────────────────────────────────────────────────────────────
 export const BUILDING_COSTS = {
   // Core
   castle:     { wood: 500, stone: 500 },
@@ -39,6 +77,7 @@ export const BUILDING_SIZES = {
   granary: 5, stables: 8, marketplace: 9, townhall: 9, well: 3, manor: 8,
 };
 
+// ── Units ─────────────────────────────────────────────────────────────────────
 export const UNIT_COSTS = {
   villager: { food: 50 },
   soldier:  { food: 75,  gold: 25 },

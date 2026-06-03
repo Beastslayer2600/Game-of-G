@@ -9,12 +9,44 @@ export class Building {
     this.hp             = this._maxHp();
     this.maxHp          = this.hp;
     this.mesh           = null;
+    this.level          = 1;
     this.productionTimer = 0;
     this.attackCooldown  = 0;
     this._sails          = null;
     this._ballistaPivot  = null;
     this._build();
   }
+
+  upgrade() {
+    if (this.level >= 3) return false;
+    this.level++;
+    const s = 1 + (this.level - 1) * 0.09;
+    if (this.mesh) this.mesh.scale.setScalar(s);
+    // Add a glowing level indicator orb on top
+    if (this.mesh) {
+      const existing = this.mesh.getObjectByName('lvl_orb');
+      if (existing) this.mesh.remove(existing);
+      const orb = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.45, 0),
+        new THREE.MeshLambertMaterial({ color: this.level === 2 ? 0xffd700 : 0x00ccff, emissive: this.level === 2 ? 0xffaa00 : 0x0088ff, emissiveIntensity: 0.7 })
+      );
+      orb.name = 'lvl_orb';
+      orb.position.y = this._topHeight();
+      this.mesh.add(orb);
+    }
+    this.maxHp = Math.round(this.maxHp * 1.5);
+    this.hp    = Math.min(this.hp + this.maxHp * 0.3, this.maxHp);
+    return true;
+  }
+
+  _topHeight() {
+    const h = { castle:18, cathedral:36, townhall:20, tower:22, ballista_tower:17,
+                gatehouse:18, windmill:12, granary:12, manor:13, tavern:9,
+                barracks:6, stables:6, blacksmith:5, well:5, house:5, farm:5 };
+    return (h[this.type] ?? 6) + 1;
+  }
+
+  productionMultiplier() { return this.level === 1 ? 1 : this.level === 2 ? 1.65 : 2.6; }
 
   _maxHp() {
     const map = {

@@ -1,4 +1,4 @@
-import { BUILDING_COSTS, GAME_STATES } from '../constants.js';
+import { BUILDING_COSTS, BUILDING_AGE, AGES, AGE_ADVANCE_COSTS, GAME_STATES } from '../constants.js';
 
 const css = (el, s) => Object.assign(el.style, s);
 const el  = (tag, s = {}, html = '') => {
@@ -60,6 +60,9 @@ export class HUD {
     this._gameOver = false;
     this._minimapCache = null;
     this._minimapTimer  = 0;
+    this._possessedUnit   = null;
+    this._selectedBuilding = null;
+    this._bpTimer = 0;
 
     this._buildUI();
     this._buildStartScreen();
@@ -133,6 +136,29 @@ export class HUD {
       opacity: '0', transition: 'opacity 0.3s', pointerEvents: 'none',
     });
     root.appendChild(this.selHint);
+
+    // Age panel (below mode box, top right)
+    this.agePanel = el('div', {
+      ...PANEL, top: '130px', right: '10px', padding: '10px 14px', fontSize: '12px',
+      minWidth: '160px', lineHeight: '1.7',
+    });
+    root.appendChild(this.agePanel);
+
+    // Building info panel (bottom left, shown on building select)
+    this.buildingPanel = el('div', {
+      ...PANEL, bottom: '90px', left: '10px', padding: '10px 14px', fontSize: '12px',
+      lineHeight: '1.8', display: 'none', minWidth: '170px',
+    });
+    root.appendChild(this.buildingPanel);
+
+    // Possession overlay (top center bar)
+    this.possessOverlay = el('div', {
+      ...PANEL, top: '10px', left: '50%', transform: 'translateX(-50%)',
+      padding: '8px 22px', display: 'none', flexDirection: 'column',
+      gap: '5px', alignItems: 'center', minWidth: '320px',
+      border: '2px solid #00eeff', boxShadow: '0 0 18px rgba(0,200,255,0.3)',
+    });
+    root.appendChild(this.possessOverlay);
 
     this.updateMode('rts');
   }
@@ -453,12 +479,105 @@ export class HUD {
 
   updateMode(mode) {
     const isFPS = mode === 'fps';
+    const isPossessing = !!this.game.player?.possessedUnit;
     this.crosshair.style.display = isFPS ? 'block' : 'none';
-    this.buildBar.style.display  = isFPS ? 'none'  : 'flex';
-    this.fpsPanel.style.display  = isFPS ? 'block' : 'none';
-    this.modeBox.innerHTML = isFPS
-      ? `<b style="font-size:14px;color:#c8a96e">🎯 FPS Mode</b><br>Click canvas to lock<br>Left Click — attack<br>TAB — RTS mode`
-      : `<b style="font-size:14px;color:#c8a96e">📍 RTS Mode</b><br>WASD / edges — pan<br>Scroll — zoom<br>TAB — FPS mode<br>1-6 — quick build<br>Tabs — all buildings`;
+    this.buildBar.style.display  = (isFPS || isPossessing) ? 'none' : 'flex';
+    this.fpsPanel.style.display  = (isFPS && !isPossessing) ? 'block' : 'none';
+    this.modeBox.innerHTML = isPossessing
+      ? `<b style="font-size:14px;color:#00eeff">🎮 Possession</b><br>WASD — Move unit<br>Click — Attack<br>C / ESC — Release`
+      : isFPS
+        ? `<b style="font-size:14px;color:#c8a96e">🎯 FPS Mode</b><br>Click canvas to lock<br>Left Click — attack<br>TAB — RTS mode`
+        : `<b style="font-size:14px;color:#c8a96e">📍 RTS Mode</b><br>WASD / edges — pan<br>Scroll — zoom<br>TAB — FPS mode<br>Click — select unit<br>C — possess selected`;
+  }
+
+  onPossess(unit) {
+    this.possessOverlay.style.display = 'flex';
+    this.possessOverlay.innerHTML =
+      `<div style="font-size:13px;color:#00eeff;font-weight:bold;letter-spacing:1px">` +
+      `🎮 CONTROLLING ${unit.type.toUpperCase()} — press <b>C</b> or <b>ESC</b> to release</div>` +
+      `<div style="width:220px;position:relative;height:10px;background:#333;border-radius:4px;overflow:hidden">` +
+      `<div id="possess-hp-fill" style="height:100%;width:100%;background:#00cc44;transition:width 0.15s;border-radius:4px"></div></div>`;
+    this._possessedUnit = unit;
+    this.updateMode('fps');
+  }
+
+  onRelease() {
+    this.possessOverlay.style.display = 'none';
+    this._possessedUnit = null;
+    this.updateMode(this.game.player?.mode ?? 'rts');
+  }
+
+  onBuildingSelect(building) {
+    if (!building) { this.buildingPanel.style.display = 'none'; this._selectedBuilding = null; return; }
+    this._selectedBuilding = building;
+    this.buildingPanel.style.display = 'block';
+    this._refreshBuildingPanel();
+  }
+
+  _refreshBuildingPanel() {
+    const b = this._selectedBuilding;
+    if (!b || b.isDestroyed()) { this.buildingPanel.style.display = 'none'; return; }
+    const label = b.type.replace(/_/g,' ');
+    const hpPct = Math.round(b.hp / b.maxHp * 100);
+    const hpColor = hpPct > 60 ? '#44ee66' : hpPct > 30 ? '#ffdd00' : '#ff4422';
+    const lvlStars = '★'.repeat(b.level) + '☆'.repeat(3 - b.level);
+    let upgradeHTML = '';
+    if (b.level < 3) {
+      const base = BUILDING_COSTS[b.type] ?? {};
+      const mult = b.level === 1 ? 0.6 : 0.9;
+      const cost = Object.fromEntries(Object.entries(base).map(([r,v]) => [r, Math.ceil(v*mult)]));
+      const resAbbr = { wood:'W', stone:'S', food:'F', gold:'G', iron:'I' };
+      const costStr = Object.entries(cost).map(([r,v]) => `${resAbbr[r]??r[0]}:${v}`).join(' ');
+      const canAfford = this.game.playerKingdom.canAfford(cost);
+      upgradeHTML = `<div id="upgrade-btn" style="margin-top:6px;cursor:pointer;padding:5px 8px;
+        background:${canAfford ? 'rgba(60,40,8,.9)' : 'rgba(30,20,4,.7)'};
+        border:1px solid ${canAfford ? '#c8a96e' : '#5a4020'};border-radius:4px;
+        color:${canAfford ? '#f0e6c8' : '#7a6040'};font-size:11px;text-align:center">
+        ⬆ Upgrade → L${b.level+1} (${costStr})</div>`;
+    } else {
+      upgradeHTML = `<div style="margin-top:6px;font-size:11px;color:#c8a96e;text-align:center">★ Max Level</div>`;
+    }
+    this.buildingPanel.innerHTML =
+      `<div style="font-weight:bold;color:#c8a96e;margin-bottom:4px">${label}</div>` +
+      `<div style="font-size:11px">${lvlStars} Level ${b.level}</div>` +
+      `<div style="font-size:11px">HP: <span style="color:${hpColor}">${Math.ceil(b.hp)}</span>/${b.maxHp}</div>` +
+      `<div style="font-size:11px">Prod: ${b.level === 1 ? '1×' : b.level === 2 ? '1.65×' : '2.6×'}</div>` +
+      upgradeHTML;
+    const btn = this.buildingPanel.querySelector('#upgrade-btn');
+    if (btn) btn.addEventListener('click', () => {
+      const ok = this.game.playerKingdom.tryUpgradeBuilding(b);
+      this.showMsg(ok ? `${label} upgraded to level ${b.level}!` : 'Cannot afford upgrade!', !ok);
+      this._refreshBuildingPanel();
+    });
+  }
+
+  _updateAgePanel() {
+    const pk = this.game.playerKingdom;
+    const info = pk.currentAgeInfo();
+    const nextCost = pk.nextAgeCost();
+    const resAbbr = { wood:'W', stone:'S', food:'F', gold:'G', iron:'I' };
+    const costStr = nextCost
+      ? Object.entries(nextCost).map(([r,v]) => `${resAbbr[r]??r[0]}:${v}`).join(' ')
+      : '';
+    const canAdvance = nextCost && pk.canAfford(nextCost);
+    let advanceHTML = '';
+    if (!pk.isMaxAge()) {
+      advanceHTML = `<div id="age-advance-btn" style="margin-top:5px;cursor:pointer;padding:4px 8px;
+        background:${canAdvance ? 'rgba(60,40,8,.9)' : 'rgba(30,20,4,.7)'};
+        border:1px solid ${canAdvance ? '#c8a96e' : '#5a4020'};border-radius:4px;
+        color:${canAdvance ? '#f0e6c8' : '#7a6040'};font-size:11px;text-align:center">
+        ⬆ Advance Age<br><span style="font-size:10px;opacity:.75">${costStr}</span></div>`;
+    } else {
+      advanceHTML = `<div style="margin-top:4px;font-size:10px;color:#c8a96e;opacity:.75">Max Age Reached</div>`;
+    }
+    this.agePanel.innerHTML =
+      `<div style="font-weight:bold;color:#c8a96e;margin-bottom:3px">${info.icon} ${info.name}</div>` +
+      advanceHTML;
+    const btn = this.agePanel.querySelector('#age-advance-btn');
+    if (btn) btn.addEventListener('click', () => {
+      const ok = pk.advanceAge();
+      this.showMsg(ok ? `Advanced to ${pk.currentAgeInfo().name}!` : 'Cannot advance age!', !ok);
+    });
   }
 
   showMsg(text, isErr = false) {
@@ -498,9 +617,30 @@ export class HUD {
       }).join('');
 
     const sel = this.game.player.selected.filter(u => !u.isDead());
-    this.selHint.style.opacity = sel.length ? '1' : '0';
-    if (sel.length) this.selHint.textContent = `${sel.length} unit${sel.length > 1 ? 's' : ''} selected — right-click to move`;
+    const isPossessing = !!this.game.player.possessedUnit;
+    this.selHint.style.opacity = (sel.length && !isPossessing) ? '1' : '0';
+    if (sel.length && !isPossessing)
+      this.selHint.textContent = `${sel.length} unit${sel.length > 1 ? 's' : ''} selected — right-click to move/attack · C to possess`;
 
+    // Possession HP bar
+    if (this._possessedUnit && !this._possessedUnit.isDead()) {
+      const fill = document.getElementById('possess-hp-fill');
+      if (fill) {
+        const pct = Math.max(0, this._possessedUnit.hp / this._possessedUnit.maxHp) * 100;
+        fill.style.width = pct + '%';
+        fill.style.background = pct > 60 ? '#00cc44' : pct > 30 ? '#ffdd00' : '#ff3300';
+      }
+    } else if (this._possessedUnit?.isDead()) {
+      this.onRelease();
+    }
+
+    // Building panel refresh (every 10 frames)
+    if (this._selectedBuilding) {
+      if (this._selectedBuilding.isDestroyed()) { this.onBuildingSelect(null); }
+      else if (this._bpTimer++ >= 10) { this._bpTimer = 0; this._refreshBuildingPanel(); }
+    }
+
+    this._updateAgePanel();
     this._minimapTimer++;
     if (this._minimapTimer >= 3) { this._minimapTimer = 0; this._updateMinimap(); }
 

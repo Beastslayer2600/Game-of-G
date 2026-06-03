@@ -24,6 +24,7 @@ export class Unit {
     this.hpBar          = null;
     this._selectionRing = null;
     this.isSelected     = false;
+    this.isPossessed    = false;
 
     this._build();
   }
@@ -61,7 +62,7 @@ export class Unit {
       helm.position.y = 1.8; g.add(helm);
     }
 
-    // HP bar background
+    // HP bar
     const bgBar = new THREE.Mesh(
       new THREE.PlaneGeometry(1,0.14),
       new THREE.MeshBasicMaterial({ color: 0x222222, depthTest: false })
@@ -74,7 +75,7 @@ export class Unit {
     );
     this.hpBar.position.set(0,2.5,0.01); this.hpBar.renderOrder = 2; g.add(this.hpBar);
 
-    // Selection ring (flat torus at feet, hidden by default)
+    // Selection ring
     this._selectionRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.9, 0.07, 4, 28),
       new THREE.MeshBasicMaterial({ color: 0x00eeff, transparent: true, opacity: 0, depthTest: false })
@@ -94,22 +95,28 @@ export class Unit {
     if (this._selectionRing) this._selectionRing.material.opacity = v ? 0.85 : 0;
   }
 
-  moveTo(dest) { this.destination = dest.clone(); this.state = 'moving'; }
+  // Hide/show mesh for first-person possession (avoid camera clipping through body)
+  setPossessed(v) {
+    this.isPossessed = v;
+    if (this.mesh) {
+      this.mesh.children.forEach(c => { c.visible = !v; });
+    }
+  }
 
+  moveTo(dest) { this.destination = dest.clone(); this.state = 'moving'; }
   attackTarget(target) { this.target = target; this.state = 'attacking'; }
 
   update(delta, world) {
     if (this.hp <= 0) return;
+    if (this.isPossessed) return; // controller handles movement
 
     this.attackCooldown = Math.max(0, this.attackCooldown - delta);
 
-    // HP bar update
     const f = this.hp / this.maxHp;
     this.hpBar.scale.x = Math.max(0, f);
     this.hpBar.position.x = (f - 1) * 0.5;
     this.hpBar.material.color.setHex(f > 0.6 ? 0x00ff00 : f > 0.3 ? 0xffdd00 : 0xff2200);
 
-    // Selection ring pulse
     if (this.isSelected && this._selectionRing) {
       const pulse = 0.65 + 0.35 * Math.sin(performance.now() * 0.004);
       this._selectionRing.material.opacity = pulse;
@@ -131,8 +138,13 @@ export class Unit {
       if (dist > this.range + 1) {
         this._moveTowards(tPos, delta, world);
       } else if (this.attackCooldown <= 0) {
-        this.target.takeDamage?.(this.attack + Math.random() * 6);
+        const killed = this.target.takeDamage?.(this.attack + Math.random() * 6);
         this.attackCooldown = 1.5;
+        // Reward food for killing animals
+        if (killed && this.target.foodYield && this.kingdom) {
+          this.kingdom.resources.food = (this.kingdom.resources.food ?? 0) + this.target.foodYield;
+        }
+        if (killed) { this.target = null; this.state = 'idle'; }
       }
     }
   }
@@ -157,8 +169,10 @@ export class Unit {
 
   _die() {
     this.hp = 0; this.state = 'dead';
+    if (this.isPossessed) this.setPossessed(false);
     if (this.isSelected) this.setSelected(false);
     if (this.mesh) {
+      this.mesh.children.forEach(c => { c.visible = true; });
       this.mesh.rotation.z = Math.PI / 2;
       setTimeout(() => { if (this.mesh) { this.scene.remove(this.mesh); this.mesh = null; } }, 3000);
     }

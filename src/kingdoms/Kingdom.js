@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Building } from '../entities/Building.js';
 import { Villager } from '../entities/Villager.js';
 import { Unit } from '../entities/Unit.js';
-import { BUILDING_COSTS, UNIT_COSTS } from '../constants.js';
+import { BUILDING_COSTS, UNIT_COSTS, UNIT_BUILDING_REQ } from '../constants.js';
 
 export class Kingdom {
   constructor(scene, world, id, color, startPos) {
@@ -12,6 +12,7 @@ export class Kingdom {
     this.color    = color;
     this.position = startPos.clone();
     this.allKingdoms = null;
+    this.age         = 0;
 
     this.resources = { wood: 300, stone: 200, food: 300, gold: 100, iron: 50 };
 
@@ -80,8 +81,13 @@ export class Kingdom {
   tryTrain(type) {
     const cost = UNIT_COSTS[type];
     if (!cost || !this.canAfford(cost)) return null;
+
+    // Check required building
+    const req = UNIT_BUILDING_REQ[type];
+    if (req && !this.buildings.find(b => b.type === req && !b.isDestroyed())) return null;
+
     this.spend(cost);
-    const spawn = this.buildings.find(b => b.type === 'barracks') ?? this.getCastle();
+    const spawn = (req && this.buildings.find(b => b.type === req)) ?? this.getCastle();
     if (!spawn) return null;
     const a = Math.random() * Math.PI * 2;
     const x = spawn.position.x + Math.cos(a) * 12;
@@ -89,6 +95,18 @@ export class Kingdom {
     const pos = new THREE.Vector3(x, this.world.getHeightAt(x, z) + 0.1, z);
     if (type === 'villager') return this.addVillager(pos);
     return this.addSoldier(type, pos);
+  }
+
+  tryUpgradeBuilding(building) {
+    if (!building || building.level >= 3) return false;
+    const base = BUILDING_COSTS[building.type];
+    if (!base) return false;
+    const mult = building.level === 1 ? 0.6 : 0.9;
+    const cost = Object.fromEntries(Object.entries(base).map(([r,v]) => [r, Math.ceil(v*mult)]));
+    if (!this.canAfford(cost)) return false;
+    this.spend(cost);
+    building.upgrade();
+    return true;
   }
 
   getCastle()   { return this.buildings.find(b => b.type === 'castle' && !b.isDestroyed()); }
@@ -112,13 +130,13 @@ export class Kingdom {
       }
     }
 
-    // Ballista towers auto-attack nearby enemies
+    // Ballista towers auto-attack enemies
     if (this.allKingdoms) {
       for (const b of this.buildings) {
         if (b.type !== 'ballista_tower') continue;
         b.attackCooldown -= delta;
         if (b.attackCooldown > 0) continue;
-        let target = null, bestDist = 48;
+        let target = null, bestDist = 48 + b.level * 8;
         for (const k of this.allKingdoms) {
           if (k === this) continue;
           for (const u of k.allUnits()) {
@@ -128,8 +146,8 @@ export class Kingdom {
           }
         }
         if (target) {
-          target.takeDamage(22 + Math.random() * 10);
-          b.attackCooldown = 3.5;
+          target.takeDamage((22 + Math.random() * 10) * b.productionMultiplier());
+          b.attackCooldown = Math.max(1.5, 3.5 / b.level);
         }
       }
     }
@@ -140,6 +158,7 @@ export class Kingdom {
   }
 
   _produce(b) {
+    const mult = b.productionMultiplier();
     const map = {
       farm:        ['food',  20],
       lumbermill:  ['wood',  12],
@@ -156,12 +175,13 @@ export class Kingdom {
       stables:     ['food',   2],
     };
     const p = map[b.type];
-    if (p) this.resources[p[0]] = (this.resources[p[0]] ?? 0) + p[1];
+    if (p) this.resources[p[0]] = (this.resources[p[0]] ?? 0) + p[1] * mult;
     if (b.type === 'townhall') {
-      this.resources.wood  = (this.resources.wood  ?? 0) + 5;
-      this.resources.stone = (this.resources.stone ?? 0) + 3;
-      this.resources.food  = (this.resources.food  ?? 0) + 5;
-      this.resources.gold  = (this.resources.gold  ?? 0) + 8;
+      const bm = 5 * mult;
+      this.resources.wood  = (this.resources.wood  ?? 0) + bm;
+      this.resources.stone = (this.resources.stone ?? 0) + bm * 0.6;
+      this.resources.food  = (this.resources.food  ?? 0) + bm;
+      this.resources.gold  = (this.resources.gold  ?? 0) + bm * 1.6;
     }
   }
 }

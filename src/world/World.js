@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Terrain } from './Terrain.js';
 import { ResourceNode } from './ResourceNode.js';
+import { Animal } from '../entities/Animal.js';
 import { WORLD_SIZE } from '../constants.js';
 
 export class World {
@@ -8,6 +9,7 @@ export class World {
     this.scene         = scene;
     this.terrain       = new Terrain(scene);
     this.resourceNodes = [];
+    this.animals       = [];
     this._clouds       = [];
     this._time         = 0;
   }
@@ -16,7 +18,9 @@ export class World {
     this.terrain.generate();
     onProgress?.(40);
     this._spawnResources();
-    onProgress?.(70);
+    onProgress?.(65);
+    this._spawnAnimals();
+    onProgress?.(75);
     this._addClouds();
     onProgress?.(90);
   }
@@ -44,6 +48,27 @@ export class World {
     }
   }
 
+  _spawnAnimals() {
+    const specs = [
+      { type: 'deer', count: 30 },
+      { type: 'wolf', count: 12 },
+      { type: 'bear', count: 6  },
+    ];
+    for (const { type, count } of specs) {
+      let placed = 0, tries = 0;
+      while (placed < count && tries < count * 10) {
+        tries++;
+        const x = (Math.random() - 0.5) * WORLD_SIZE * 0.75;
+        const z = (Math.random() - 0.5) * WORLD_SIZE * 0.75;
+        if (!this.terrain.isAboveWater(x, z)) continue;
+        const y = this.terrain.getHeightAt(x, z);
+        if (y > 38) continue;
+        this.animals.push(new Animal(this.scene, type, new THREE.Vector3(x, y + 0.28, z)));
+        placed++;
+      }
+    }
+  }
+
   _addClouds() {
     const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.72 });
     for (let i = 0; i < 28; i++) {
@@ -61,7 +86,6 @@ export class World {
         78 + Math.random() * 45,
         (Math.random() - 0.5) * WORLD_SIZE * 1.1,
       );
-      // Individual drift speed and direction
       g.userData.speed = 2 + Math.random() * 4;
       g.userData.dir   = Math.random() > 0.5 ? 1 : -1;
       this.scene.add(g);
@@ -81,18 +105,22 @@ export class World {
     return best;
   }
 
-  update(delta) {
+  update(delta, kingdoms, playerFPSPos) {
     this._time += delta;
     this.terrain.updateWater(this._time);
 
-    // Drift clouds slowly across the sky
     for (const cloud of this._clouds) {
       cloud.position.x += delta * cloud.userData.speed * cloud.userData.dir;
       const limit = WORLD_SIZE * 0.6;
       if (cloud.position.x > limit)  cloud.position.x = -limit;
       if (cloud.position.x < -limit) cloud.position.x =  limit;
-      // Gentle vertical bob
       cloud.position.y += Math.sin(this._time * 0.12 + cloud.userData.speed) * delta * 0.3;
     }
+
+    for (const a of this.animals) {
+      if (!a.isDead()) a.update(delta, this, kingdoms, playerFPSPos);
+    }
+    // Remove animals whose mesh has been cleaned up after die timer
+    this.animals = this.animals.filter(a => !a.isDead() || a.mesh !== null);
   }
 }
