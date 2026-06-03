@@ -248,12 +248,22 @@ export class HUD {
             { type:'villager',icon:'👤', label:'Villager', key:'V', costs:'F:50',      border:'#44cc44' },
             { type:'archer',  icon:'🏹', label:'Archer',  key:'',  costs:'F:60 W:25', border:'#cc8844' },
             { type:'knight',  icon:'🛡', label:'Knight',  key:'',  costs:'F:100 G:75',border:'#8844cc' },
+            { type:'catapult',icon:'💣', label:'Catapult',key:'',  costs:'F:180 G:100 I:60', border:'#888888' },
           ];
           for (const t of trainData) {
             const sub = t.key ? `[${t.key}] ${t.costs}` : t.costs;
             btnRow.appendChild(this._btn(t.icon, t.label, sub, () => {
-              const u = this.game.playerKingdom.tryTrain(t.type);
-              this.showMsg(u ? `${t.label} trained!` : 'Not enough resources!', !u);
+              const pk = this.game.playerKingdom;
+              if (t.type === 'catapult' && !pk.researchedTechs.has('siege_mastery')) {
+                this.showMsg('Research Siege Mastery (barracks) first!', true);
+                return;
+              }
+              if (pk.currentPop() >= pk.maxPop()) {
+                this.showMsg('Population cap reached — build more houses!', true);
+                return;
+              }
+              const u = pk.tryTrain(t.type);
+              this.showMsg(u ? `${t.label} trained!` : 'Not enough resources or missing building!', !u);
             }, t.border));
           }
           continue;
