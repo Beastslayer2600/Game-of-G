@@ -1,4 +1,4 @@
-import { BUILDING_COSTS, BUILDING_AGE, AGES, AGE_ADVANCE_COSTS, GAME_STATES } from '../constants.js';
+import { BUILDING_COSTS, BUILDING_AGE, AGES, AGE_ADVANCE_COSTS, GAME_STATES, TECHS } from '../constants.js';
 import { UnitDmgEvents } from '../entities/Unit.js';
 
 const css = (el, s) => Object.assign(el.style, s);
@@ -64,6 +64,7 @@ export class HUD {
     this._possessedUnit   = null;
     this._selectedBuilding = null;
     this._bpTimer = 0;
+    this._idleVillagerIdx = 0;
 
     this._buildUI();
     this._buildStartScreen();
@@ -84,6 +85,27 @@ export class HUD {
       fontSize: '14px', whiteSpace: 'nowrap', userSelect: 'none',
     });
     root.appendChild(this.resBar);
+
+    // Idle villager button (centered, below resource bar)
+    this._idleVilBtn = el('button', {
+      ...PANEL, top: '10px', left: '50%',
+      transform: 'translateX(-50%) translateY(44px)',
+      padding: '4px 12px', fontSize: '12px', cursor: 'pointer',
+      pointerEvents: 'all', zIndex: '10',
+    }, '👤 Idle: 0');
+    this._idleVilBtn.addEventListener('click', () => {
+      const idle = this.game.playerKingdom.villagers.filter(v => !v.isDead() && v.state === 'idle');
+      if (!idle.length) return;
+      this._idleVillagerIdx = (this._idleVillagerIdx + 1) % idle.length;
+      const v = idle[this._idleVillagerIdx];
+      this.game.player.rtsTarget.set(v.position.x, 0, v.position.z);
+      this.game.player._positionRTSCam?.();
+      for (const u of this.game.player.selected) u.setSelected?.(false);
+      this.game.player.selected = [v];
+      v.setSelected?.(true);
+      this.game.player.mode = 'rts';
+    });
+    root.appendChild(this._idleVilBtn);
 
     // Mode info (top right)
     this.modeBox = el('div', {
@@ -407,6 +429,22 @@ export class HUD {
     this._minimapCtx = this._minimapCanvas.getContext('2d');
     document.getElementById('ui-root').appendChild(this._minimapCanvas);
     this._minimapSize = SIZE;
+
+    // Click on minimap to move RTS camera
+    this._minimapCanvas.addEventListener('click', e => {
+      const rect = this._minimapCanvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const T  = this.game.world.terrain;
+      const wx = (px / SIZE - 0.5) * T.size;
+      const wz = (py / SIZE - 0.5) * T.size;
+      const p  = this.game.player;
+      if (p.mode === 'rts') {
+        p.rtsTarget.set(wx, 0, wz);
+        p._positionRTSCam();
+      }
+    });
+
     this._prebakeMinimapTerrain();
   }
 
@@ -574,18 +612,63 @@ export class HUD {
     } else {
       upgradeHTML = `<div style="margin-top:6px;font-size:11px;color:#c8a96e;text-align:center">★ Max Level</div>`;
     }
+    // Research section
+    const buildingTechs = Object.entries(TECHS).filter(([id, t]) =>
+      t.building === b.type &&
+      !this.game.playerKingdom.researchedTechs.has(id) &&
+      (t.age ?? 0) <= this.game.playerKingdom.age
+    );
+
+    let researchHTML = '';
+    if (buildingTechs.length) {
+      researchHTML = '<div style="margin-top:6px;font-weight:bold;font-size:11px;color:#c8a96e">Research:</div>';
+      for (const [id, tech] of buildingTechs) {
+        if (tech.req && !this.game.playerKingdom.researchedTechs.has(tech.req)) continue;
+        const resAbbr = { wood:'W', stone:'S', food:'F', gold:'G', iron:'I' };
+        const costStr = Object.entries(tech.cost).map(([r,v]) => `${resAbbr[r]??r[0].toUpperCase()}:${v}`).join(' ');
+        const canAfford = this.game.playerKingdom.canAfford(tech.cost);
+        const busy = !!this.game.playerKingdom.activeResearch;
+        researchHTML += `<div class="res-btn" data-tech="${id}" style="margin-top:3px;cursor:${canAfford&&!busy?'pointer':'default'};
+          padding:3px 6px;background:${canAfford&&!busy?'rgba(60,40,8,.9)':'rgba(20,15,5,.7)'};
+          border:1px solid ${canAfford&&!busy?'#8b6914':'#4a3010'};border-radius:3px;
+          color:${canAfford&&!busy?'#f0e6c8':'#6a5030'};font-size:10px">
+          ${tech.icon} ${tech.name} (${costStr})</div>`;
+      }
+    }
+
+    // Show active research progress for this building
+    let activeResearchHTML = '';
+    if (this.game.playerKingdom.activeResearch) {
+      const ar = this.game.playerKingdom.activeResearch;
+      const at = TECHS[ar.techId];
+      if (at?.building === b.type) {
+        const pct = Math.round(ar.timer / ar.totalTime * 100);
+        activeResearchHTML =
+          '<div style="margin-top:6px;font-size:11px;color:#88ff88">🔬 Researching: ' + at.name + ' ' + pct + '%</div>' +
+          '<div style="width:100%;height:6px;background:#333;border-radius:3px;margin-top:2px"><div style="width:' + pct + '%;height:100%;background:#44aaff;border-radius:3px"></div></div>';
+      }
+    }
+
     this.buildingPanel.innerHTML =
       `<div style="font-weight:bold;color:#c8a96e;margin-bottom:4px">${label}</div>` +
       `<div style="font-size:11px">${lvlStars} Level ${b.level}</div>` +
       `<div style="font-size:11px">HP: <span style="color:${hpColor}">${Math.ceil(b.hp)}</span>/${b.maxHp}</div>` +
       `<div style="font-size:11px">Prod: ${b.level === 1 ? '1×' : b.level === 2 ? '1.65×' : '2.6×'}</div>` +
-      upgradeHTML;
+      upgradeHTML + researchHTML + activeResearchHTML;
     const btn = this.buildingPanel.querySelector('#upgrade-btn');
     if (btn) btn.addEventListener('click', () => {
       const ok = this.game.playerKingdom.tryUpgradeBuilding(b);
       this.showMsg(ok ? `${label} upgraded to level ${b.level}!` : 'Cannot afford upgrade!', !ok);
       this._refreshBuildingPanel();
     });
+    // Add click handlers for research buttons
+    const resBtns = this.buildingPanel.querySelectorAll('.res-btn');
+    resBtns.forEach(rbtn => rbtn.addEventListener('click', () => {
+      const techId = rbtn.dataset.tech;
+      const ok = this.game.playerKingdom.startResearch(techId);
+      this.showMsg(ok ? `Researching ${TECHS[techId].name}...` : 'Cannot research now!', !ok);
+      this._refreshBuildingPanel();
+    }));
   }
 
   _updateAgePanel() {
@@ -634,14 +717,22 @@ export class HUD {
     const pk = this.game.playerKingdom;
     const r  = pk.resources;
 
+    const maxPop = pk.maxPop();
+    const curPop = pk.currentPop();
+    const popColor = curPop >= maxPop ? '#ff4444' : '#ffd700';
     this.resBar.innerHTML =
-      `<span style="color:#ffd700;font-weight:bold;margin-right:4px">⚜ ${pk.villagers.length + pk.soldiers.length} pop</span>` +
+      `<span style="color:${popColor};font-weight:bold;margin-right:4px">⚜ ${curPop}/${maxPop}</span>` +
       `<span>🪵 ${Math.floor(r.wood  ?? 0)}</span>` +
       `<span>🪨 ${Math.floor(r.stone ?? 0)}</span>` +
       `<span>🌾 ${Math.floor(r.food  ?? 0)}</span>` +
       `<span>💰 ${Math.floor(r.gold  ?? 0)}</span>` +
       `<span>⚙️ ${Math.floor(r.iron  ?? 0)}</span>` +
       `<span style="color:#aaa;font-size:11px;margin-left:6px">Score ${Math.floor(pk.score)}</span>`;
+
+    // Update idle villager button
+    const idleVillagers = pk.villagers.filter(v => !v.isDead() && v.state === 'idle');
+    this._idleVilBtn.textContent = `👤 Idle: ${idleVillagers.length}`;
+    this._idleVilBtn.style.background = idleVillagers.length > 0 ? 'rgba(255,140,0,0.8)' : 'rgba(30,20,6,0.7)';
 
     this.overview.innerHTML =
       `<div style="font-weight:bold;color:#c8a96e;margin-bottom:6px">⚜ KINGDOMS</div>` +
