@@ -46,7 +46,8 @@ export class Villager extends Unit {
         if (this.harvestTimer >= 1.8) {
           this.harvestTimer = 0;
           if (this.targetNode && !this.targetNode.isDepleted()) {
-            this.carryAmt += this.targetNode.harvest(6);
+            const bonus = 1 + (this.kingdom?.gatherBonus ?? 0);
+            this.carryAmt += this.targetNode.harvest(6 * bonus);
             if (this.carryAmt >= this.carryMax) {
               this.state = 'returningHome';
               this.moveTo(this.homePos);

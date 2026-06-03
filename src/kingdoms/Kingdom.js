@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Building } from '../entities/Building.js';
 import { Villager } from '../entities/Villager.js';
 import { Unit } from '../entities/Unit.js';
-import { BUILDING_COSTS, UNIT_COSTS, UNIT_BUILDING_REQ } from '../constants.js';
+import { BUILDING_COSTS, UNIT_COSTS, UNIT_BUILDING_REQ, TECHS, BUILDING_POP } from '../constants.js';
 
 export class Kingdom {
   constructor(scene, world, id, color, startPos) {
@@ -19,6 +19,13 @@ export class Kingdom {
     this.buildings = [];
     this.villagers = [];
     this.soldiers  = [];
+
+    this.attackBonus  = 0;
+    this.armorBonus   = 0;
+    this.speedBonus   = 0;
+    this.gatherBonus  = 0;
+    this.researchedTechs = new Set();
+    this.activeResearch  = null; // { techId, timer, totalTime }
 
     this._init();
   }
@@ -57,8 +64,48 @@ export class Kingdom {
 
   addSoldier(type, pos) {
     const u = new Unit(this.scene, type, pos, this.color, this);
+    u.attack += this.attackBonus;
+    u.speed  += this.speedBonus;
     this.soldiers.push(u);
     return u;
+  }
+
+  maxPop() {
+    let pop = 0;
+    for (const b of this.buildings) {
+      if (!b.isDestroyed()) pop += (BUILDING_POP[b.type] ?? 0);
+    }
+    return Math.min(200, Math.max(10, pop));
+  }
+
+  currentPop() { return this.villagers.length + this.soldiers.length; }
+
+  startResearch(techId) {
+    const tech = TECHS[techId];
+    if (!tech) return false;
+    if (this.researchedTechs.has(techId)) return false;
+    if (tech.req && !this.researchedTechs.has(tech.req)) return false;
+    if ((tech.age ?? 0) > this.age) return false;
+    if (this.activeResearch) return false; // already researching
+    if (!this.canAfford(tech.cost)) return false;
+    this.spend(tech.cost);
+    this.activeResearch = { techId, timer: 0, totalTime: tech.time };
+    return true;
+  }
+
+  _applyTech(techId) {
+    const tech = TECHS[techId];
+    if (!tech) return;
+    this.researchedTechs.add(techId);
+    const e = tech.effect;
+    if (e.attackBonus) this.attackBonus += e.attackBonus;
+    if (e.armorBonus)  this.armorBonus  += e.armorBonus;
+    if (e.speedBonus)  this.speedBonus  += e.speedBonus;
+    if (e.gatherBonus) this.gatherBonus += e.gatherBonus;
+    // Apply speed bonus to existing units
+    if (e.speedBonus) {
+      for (const u of [...this.villagers, ...this.soldiers]) u.speed += e.speedBonus;
+    }
   }
 
   canAfford(cost) {
@@ -79,6 +126,8 @@ export class Kingdom {
   }
 
   tryTrain(type) {
+    if (this.currentPop() >= this.maxPop()) return null;
+
     const cost = UNIT_COSTS[type];
     if (!cost || !this.canAfford(cost)) return null;
 
@@ -87,14 +136,19 @@ export class Kingdom {
     if (req && !this.buildings.find(b => b.type === req && !b.isDestroyed())) return null;
 
     this.spend(cost);
-    const spawn = (req && this.buildings.find(b => b.type === req)) ?? this.getCastle();
+    const spawn = (req && this.buildings.find(b => b.type === req && !b.isDestroyed())) ?? this.getCastle();
     if (!spawn) return null;
     const a = Math.random() * Math.PI * 2;
     const x = spawn.position.x + Math.cos(a) * 12;
     const z = spawn.position.z + Math.sin(a) * 12;
     const pos = new THREE.Vector3(x, this.world.getHeightAt(x, z) + 0.1, z);
-    if (type === 'villager') return this.addVillager(pos);
-    return this.addSoldier(type, pos);
+    let unit;
+    if (type === 'villager') unit = this.addVillager(pos);
+    else unit = this.addSoldier(type, pos);
+    // Move to rally point if set
+    if (unit && spawn.rallyPoint) unit.moveTo(spawn.rallyPoint);
+    else if (unit && type !== 'villager' && this.getCastle()?.rallyPoint) unit.moveTo(this.getCastle().rallyPoint);
+    return unit;
   }
 
   tryUpgradeBuilding(building) {
@@ -122,6 +176,15 @@ export class Kingdom {
     for (const b of this.buildings) b.update(delta);
     for (const v of this.villagers) v.update(delta, this.world);
     for (const u of this.soldiers)  u.update(delta, this.world);
+
+    // Tick active research
+    if (this.activeResearch) {
+      this.activeResearch.timer += delta;
+      if (this.activeResearch.timer >= this.activeResearch.totalTime) {
+        this._applyTech(this.activeResearch.techId);
+        this.activeResearch = null;
+      }
+    }
 
     for (const b of this.buildings) {
       if (b.productionTimer >= 10) {

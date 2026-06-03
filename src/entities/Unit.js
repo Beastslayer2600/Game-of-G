@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { UNIT_STATS } from '../constants.js';
+import { UNIT_STATS, UNIT_COUNTER } from '../constants.js';
 
 // Shared registry — HUD reads this to render floating damage numbers each frame
 const _dmgEvents = [];
@@ -64,6 +64,20 @@ export class Unit {
     if (this.type === 'knight') {
       const helm = new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.37,0.5,8), this._mat(0x888888));
       helm.position.y = 1.8; g.add(helm);
+    }
+    if (this.type === 'catapult') {
+      const cart = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 2.4), this._mat(0xdeb887));
+      cart.position.y = 0.5; cart.castShadow = true; g.add(cart);
+      for (const [x, z] of [[-0.7,0.9],[0.7,0.9],[-0.7,-0.9],[0.7,-0.9]]) {
+        const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.35,0.08,4,12), this._mat(0x6b3a1f));
+        wheel.position.set(x, 0.35, z); wheel.rotation.y = Math.PI/2; g.add(wheel);
+      }
+      const pivot = new THREE.Group(); pivot.position.set(0, 0.7, 0); g.add(pivot);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.0, 0.12), this._mat(0x8B5E3C));
+      arm.position.y = 0.9; arm.rotation.z = 0.4; pivot.add(arm);
+      const sling = new THREE.Mesh(new THREE.SphereGeometry(0.2,5,4), this._mat(0x222222));
+      sling.position.set(0.8, 1.8, 0); pivot.add(sling);
+      g.castShadow = true;
     }
 
     // HP bar
@@ -135,15 +149,30 @@ export class Unit {
 
     if (this.state === 'attacking' && this.target) {
       const tPos = this.target.position ?? this.target.mesh?.position ?? new THREE.Vector3();
-      if (!this.target.hp || this.target.hp <= 0) {
+      if (!this.target.hp || this.target.hp <= 0 || this.target.isDestroyed?.()) {
         this.target = null; this.state = 'idle'; return;
       }
       const dist = this.position.distanceTo(tPos);
       if (dist > this.range + 1) {
         this._moveTowards(tPos, delta, world);
       } else if (this.attackCooldown <= 0) {
-        const killed = this.target.takeDamage?.(this.attack + Math.random() * 6);
+        let dmg = this.attack + (this.kingdom?.attackBonus ?? 0) + Math.random() * 6;
+        const counter = UNIT_COUNTER[this.type]?.[this.target.type];
+        if (counter) dmg *= counter;
+        const killed = this.target.takeDamage?.(dmg);
         this.attackCooldown = 1.5;
+        // Catapult splash damage
+        if (this.type === 'catapult' && this.kingdom?.allKingdoms) {
+          for (const k of this.kingdom.allKingdoms) {
+            if (k === this.kingdom) continue;
+            for (const u of k.allUnits()) {
+              if (u.isDead() || u === this.target) continue;
+              if (u.position.distanceTo(tPos) < 5) {
+                u.takeDamage(this.attack * 0.5);
+              }
+            }
+          }
+        }
         // Reward food for killing animals
         if (killed && this.target.foodYield && this.kingdom) {
           this.kingdom.resources.food = (this.kingdom.resources.food ?? 0) + this.target.foodYield;
@@ -166,9 +195,12 @@ export class Unit {
   }
 
   takeDamage(dmg) {
-    this.hp -= dmg;
+    // Apply armor reduction
+    const armor = this.kingdom?.armorBonus ?? 0;
+    const reduced = Math.max(1, dmg - armor);
+    this.hp -= reduced;
     // Queue floating number for HUD
-    _dmgEvents.push({ pos: this.position.clone().add(new THREE.Vector3(0, 2.2, 0)), dmg: Math.ceil(dmg), t: 0 });
+    _dmgEvents.push({ pos: this.position.clone().add(new THREE.Vector3(0, 2.2, 0)), dmg: Math.ceil(reduced), t: 0 });
     // Brief red flash
     if (this.mesh) {
       this.mesh.children.forEach(c => {
