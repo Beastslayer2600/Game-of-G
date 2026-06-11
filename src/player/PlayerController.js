@@ -11,7 +11,7 @@ export class PlayerController {
     const aspect = window.innerWidth / window.innerHeight;
 
     this.fpsCam = new THREE.PerspectiveCamera(75, aspect, 0.1, 800);
-    const sp = game.playerKingdom.position;
+    const sp = game.playerKingdom?.position ?? new THREE.Vector3(0, 10, 0);
     this.fpsCam.position.set(sp.x, sp.y + 2.2, sp.z + 12);
     this.fpsPos  = this.fpsCam.position.clone();
     this.yaw     = 0;

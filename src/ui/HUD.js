@@ -1,4 +1,4 @@
-import { BUILDING_COSTS, BUILDING_AGE, AGES, AGE_ADVANCE_COSTS, GAME_STATES, TECHS } from '../constants.js';
+import { BUILDING_COSTS, BUILDING_AGE, AGES, AGE_ADVANCE_COSTS, GAME_STATES, TECHS, GAME_MODES, KINGDOM_SKINS } from '../constants.js';
 import { UnitDmgEvents } from '../entities/Unit.js';
 
 const css = (el, s) => Object.assign(el.style, s);
@@ -192,6 +192,17 @@ export class HUD {
     });
     root.appendChild(this.possessOverlay);
 
+    // Wave / wonder banner (top center, large)
+    this.waveBanner = el('div', {
+      position: 'fixed', top: '70px', left: '50%', transform: 'translateX(-50%)',
+      background: 'rgba(140,20,20,.92)', border: '2px solid #ff4422',
+      borderRadius: '8px', padding: '10px 32px', fontSize: '20px', fontWeight: 'bold',
+      color: '#fff', textShadow: '0 0 10px #ff4422', fontFamily: "'Georgia',serif",
+      display: 'none', zIndex: '50', pointerEvents: 'none',
+      boxShadow: '0 0 30px rgba(200,40,20,.4)',
+    });
+    document.getElementById('ui-root').appendChild(this.waveBanner);
+
     this.updateMode('rts');
   }
 
@@ -308,64 +319,138 @@ export class HUD {
   _buildStartScreen() {
     const overlay = el('div', {
       position: 'fixed', inset: '0',
-      background: 'linear-gradient(to bottom, rgba(4,8,16,.82) 0%, rgba(8,18,10,.78) 100%)',
+      background: 'radial-gradient(ellipse at 50% 30%, rgba(8,20,40,.92) 0%, rgba(2,6,12,.97) 100%)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontFamily: "'Georgia', serif", zIndex: '100', pointerEvents: 'all',
+      overflow: 'auto',
     });
 
-    const card = el('div', {
-      background: 'rgba(12,7,2,.92)',
-      border: '3px solid #8b6914',
-      borderRadius: '12px',
-      padding: '42px 54px',
-      maxWidth: '540px', width: '90%',
-      textAlign: 'center',
-      boxShadow: '0 0 60px rgba(139,105,20,.35)',
+    const wrap = el('div', { maxWidth: '720px', width: '96%', padding: '20px 0', textAlign: 'center' });
+
+    // Title
+    wrap.appendChild(el('div', { fontSize: '56px', marginBottom: '4px', filter: 'drop-shadow(0 0 20px #8b6914)' }, '⚔'));
+    wrap.appendChild(el('h1', {
+      color: '#c8a96e', fontSize: '38px', margin: '0 0 4px',
+      textShadow: '0 0 30px #8b6914, 0 0 60px #5a3a08', letterSpacing: '3px',
+    }, 'MEDIEVAL KINGDOM'));
+    wrap.appendChild(el('p', {
+      color: '#8a6a3a', fontSize: '13px', margin: '0 0 28px', letterSpacing: '4px',
+    }, 'BUILD · CONQUER · SURVIVE'));
+
+    // Mode selection
+    wrap.appendChild(el('div', { color: '#c8a96e', fontSize: '13px', marginBottom: '10px', letterSpacing: '2px' }, 'SELECT GAME MODE'));
+    const modeGrid = el('div', { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '22px' });
+
+    let selectedMode = 'conquest';
+    this._selectedMode = selectedMode;
+    const modeCards = {};
+
+    for (const [id, cfg] of Object.entries(GAME_MODES)) {
+      const card = el('div', {
+        background: id === 'conquest' ? 'rgba(60,40,8,.9)' : 'rgba(20,12,4,.8)',
+        border: `2px solid ${id === 'conquest' ? cfg.color : '#4a3210'}`,
+        borderRadius: '8px', padding: '14px 16px', cursor: 'pointer',
+        transition: 'all 0.18s', textAlign: 'left',
+      });
+      card.innerHTML = `
+        <div style="font-size:22px;margin-bottom:4px">${cfg.icon}</div>
+        <div style="color:${cfg.color};font-weight:bold;font-size:14px;margin-bottom:4px">${cfg.name}</div>
+        <div style="color:#c8b890;font-size:11px;line-height:1.5">${cfg.desc}</div>
+        <div style="color:#7a6040;font-size:10px;margin-top:4px">${cfg.detail}</div>
+      `;
+      card.addEventListener('click', () => {
+        selectedMode = id;
+        this._selectedMode = id;
+        for (const [mid, mc] of Object.entries(modeCards)) {
+          const c = GAME_MODES[mid].color;
+          mc.style.border = `2px solid ${mid === id ? c : '#4a3210'}`;
+          mc.style.background = mid === id ? 'rgba(60,40,8,.9)' : 'rgba(20,12,4,.8)';
+        }
+      });
+      modeGrid.appendChild(card);
+      modeCards[id] = card;
+    }
+    wrap.appendChild(modeGrid);
+
+    // Kingdom skin
+    wrap.appendChild(el('div', { color: '#c8a96e', fontSize: '13px', marginBottom: '10px', letterSpacing: '2px' }, 'CHOOSE YOUR BANNER'));
+    const skinRow = el('div', { display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '22px', flexWrap: 'wrap' });
+    let selectedSkin = 0;
+    this._selectedSkin = 0;
+    const skinBtns = [];
+
+    KINGDOM_SKINS.forEach((skin, i) => {
+      const btn = el('div', {
+        width: '52px', height: '52px', borderRadius: '8px', cursor: 'pointer',
+        background: skin.hex, border: i === 0 ? '3px solid #fff' : '3px solid transparent',
+        transition: 'all 0.15s', display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        paddingBottom: '3px', fontSize: '10px', color: 'rgba(255,255,255,.85)',
+        textShadow: '1px 1px 2px #000', boxShadow: i === 0 ? `0 0 12px ${skin.hex}` : 'none',
+      }, skin.name);
+      btn.addEventListener('click', () => {
+        selectedSkin = i;
+        this._selectedSkin = i;
+        skinBtns.forEach((b, j) => {
+          b.style.border = j === i ? '3px solid #fff' : '3px solid transparent';
+          b.style.boxShadow = j === i ? `0 0 12px ${KINGDOM_SKINS[j].hex}` : 'none';
+        });
+      });
+      skinRow.appendChild(btn);
+      skinBtns.push(btn);
     });
+    wrap.appendChild(skinRow);
 
-    card.appendChild(el('div', { fontSize: '52px', marginBottom: '6px' }, '⚔'));
-    card.appendChild(el('h1', { color: '#c8a96e', fontSize: '32px', margin: '0 0 6px', textShadow: '0 0 18px #8b6914' }, 'Medieval Kingdom'));
-    card.appendChild(el('p', { color: '#a08050', fontSize: '14px', margin: '0 0 26px', letterSpacing: '2px' }, 'BUILD · CONQUER · SURVIVE'));
+    // Controls cheatsheet
+    const ctrl = el('div', {
+      background: 'rgba(255,255,255,.04)', border: '1px solid #3a2808',
+      borderRadius: '8px', padding: '12px 16px', marginBottom: '22px',
+      fontSize: '11px', color: '#c8b890', lineHeight: '1.8', textAlign: 'left',
+      columns: '2', columnGap: '24px',
+    }, `<b style="color:#c8a96e">RTS CONTROLS</b><br>
+        WASD / edges — pan camera<br>
+        Scroll — zoom in/out<br>
+        Click — select unit/building<br>
+        Right-click — move / gather / attack<br>
+        Drag — box-select multiple units<br>
+        <br>
+        <b style="color:#c8a96e">UNIT COMMANDS</b><br>
+        A+click — attack-move<br>
+        S — stop units<br>
+        C — possess unit (first-person)<br>
+        Ctrl+1–5 — assign group · 1–5 recall<br>
+        T — train soldier · V — villager`);
+    wrap.appendChild(ctrl);
 
-    const controls = el('div', {
-      background: 'rgba(255,255,255,.05)', border: '1px solid #4a3210',
-      borderRadius: '8px', padding: '14px 18px', marginBottom: '28px',
-      fontSize: '12px', color: '#c8b890', lineHeight: '1.9', textAlign: 'left',
-    }, `<b style="color:#c8a96e;display:block;margin-bottom:6px">CONTROLS</b>
-        📍 RTS — pan camera &amp; manage city<br>
-        🎯 FPS — walk around &amp; attack enemies<br>
-        <b style="color:#aaa">TAB</b> — switch mode &nbsp;
-        <b style="color:#aaa">1-6</b> — quick buildings<br>
-        <b style="color:#aaa">T</b> — train soldier &nbsp;
-        <b style="color:#aaa">V</b> — train villager<br>
-        RTS: <b style="color:#aaa">click</b> to select unit ·
-        <b style="color:#aaa">right-click</b> to move/cancel build`);
-    card.appendChild(controls);
-
+    // Start button
     const startBtn = el('button', {
       background: 'linear-gradient(to bottom, #8b5e14, #5a3a08)',
       border: '2px solid #c8a96e', borderRadius: '8px',
-      color: '#f8e8c0', fontSize: '18px', padding: '13px 42px',
-      cursor: 'pointer', fontFamily: "'Georgia',serif", letterSpacing: '1px',
-      transition: 'all 0.2s', pointerEvents: 'all',
-    }, '⚔ Begin Conquest');
+      color: '#f8e8c0', fontSize: '20px', padding: '14px 54px',
+      cursor: 'pointer', fontFamily: "'Georgia',serif", letterSpacing: '2px',
+      transition: 'all 0.2s', pointerEvents: 'all', width: '100%', maxWidth: '320px',
+      boxShadow: '0 0 24px rgba(139,105,20,.35)',
+    }, '⚔  Begin');
     startBtn.addEventListener('mouseenter', () => {
       startBtn.style.background = 'linear-gradient(to bottom, #b07820, #7a4e12)';
       startBtn.style.transform = 'scale(1.04)';
+      startBtn.style.boxShadow = '0 0 36px rgba(200,169,110,.5)';
     });
     startBtn.addEventListener('mouseleave', () => {
       startBtn.style.background = 'linear-gradient(to bottom, #8b5e14, #5a3a08)';
       startBtn.style.transform = 'scale(1)';
+      startBtn.style.boxShadow = '0 0 24px rgba(139,105,20,.35)';
     });
     startBtn.addEventListener('click', () => {
       overlay.style.opacity = '0';
       overlay.style.transition = 'opacity 0.6s';
       setTimeout(() => { overlay.style.display = 'none'; }, 620);
+      this.game.gameMode   = this._selectedMode ?? 'conquest';
+      this.game.playerSkin = this._selectedSkin ?? 0;
       this.game.startGame();
     });
-    card.appendChild(startBtn);
+    wrap.appendChild(startBtn);
 
-    overlay.appendChild(card);
+    overlay.appendChild(wrap);
     document.getElementById('ui-root').appendChild(overlay);
     this._startOverlay = overlay;
     overlay.style.display = 'none';
@@ -787,10 +872,35 @@ export class HUD {
       if (!pk.isAlive()) {
         this._gameOver = true;
         this._showEndScreen(false);
-      } else if (this.game.kingdoms.filter((k, i) => i > 0 && k.isAlive()).length === 0) {
+      } else if (
+        this.game.gameMode === 'conquest' &&
+        this.game.kingdoms.filter((k, i) => i > 0 && k.isAlive()).length === 0
+      ) {
         this._gameOver = true;
         this._showEndScreen(true);
       }
+    }
+
+    // Survival wave banner
+    if (this.game.gameMode === 'survival') {
+      const t = Math.ceil(this.game._waveTimer);
+      const w = this.game._waveNumber;
+      this.waveBanner.style.display = 'block';
+      this.waveBanner.textContent   = w === 0
+        ? `⚔ First wave in ${t}s`
+        : `⚔ Wave ${w} survived · Next in ${t}s`;
+      this.waveBanner.style.background = t < 15 ? 'rgba(160,20,20,.95)' : 'rgba(100,20,20,.88)';
+    }
+
+    // Wonder timer
+    if (this.game.gameMode === 'wonder' && this.game._wonderActive) {
+      const t = Math.ceil(this.game._wonderTimer);
+      const m = Math.floor(t / 60), s2 = t % 60;
+      this.waveBanner.style.display = 'block';
+      this.waveBanner.style.background = 'rgba(80,60,8,.92)';
+      this.waveBanner.style.borderColor = '#d4af37';
+      this.waveBanner.style.boxShadow   = '0 0 30px rgba(212,175,55,.4)';
+      this.waveBanner.textContent = `\u{1F3DB} Wonder: ${m}:${String(s2).padStart(2, '0')} remaining`;
     }
   }
 
