@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { TexFactory } from '../world/TexFactory.js';
 
 export class Building {
   constructor(scene, type, position, kingdomColor) {
@@ -60,19 +61,27 @@ export class Building {
 
   _mat(c) { return new THREE.MeshLambertMaterial({ color: c }); }
 
+  _tmat(color, texMethod) {
+    try {
+      const t = TexFactory[texMethod]?.();
+      return new THREE.MeshLambertMaterial({ color, map: t });
+    } catch(_) { return this._mat(color); }
+  }
+
   _build() {
     const g = new THREE.Group();
-    const stone   = this._mat(0x9e9e9e);
-    const dkstone = this._mat(0x787878);
-    const ltstone = this._mat(0xc8c0b0);
-    const wood    = this._mat(0xdeb887);
-    const dkwood  = this._mat(0x8B5E3C);
-    const roof    = this._mat(0x8b0000);
+    const stone   = this._tmat(0xc8c0b0, 'stone');
+    const dkstone = this._tmat(0xa09888, 'stone');
+    const ltstone = this._tmat(0xd8d4c8, 'stone');
+    const wood    = this._tmat(0xd4a060, 'wood');
+    const dkwood  = this._tmat(0x9a6030, 'darkWood');
+    const roof    = this._tmat(0xcc4422, 'roof');
+    const straw   = this._tmat(0xd4a820, 'thatch');
+    const white   = this._tmat(0xf0f0e0, 'plaster');
+    // keep these as plain colors (accents):
     const flag    = this._mat(this.kingdomColor);
     const gold    = this._mat(0xffd700);
     const brown   = this._mat(0x6b3a1f);
-    const straw   = this._mat(0xdaa520);
-    const white   = this._mat(0xf5f5dc);
     const black   = this._mat(0x1a1208);
 
     switch (this.type) {

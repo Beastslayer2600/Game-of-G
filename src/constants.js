@@ -122,3 +122,43 @@ export const GAME_STATES   = { MENU: 'menu', PLAYING: 'playing', OVER: 'over' };
 
 export const KINGDOM_COLORS = [0x4488ff, 0xff3333, 0x33cc33, 0xffaa00];
 export const KINGDOM_NAMES  = ['Blue Kingdom', 'Red Kingdom', 'Green Kingdom', 'Orange Kingdom'];
+
+export const GAME_MODES = {
+  conquest: {
+    name: 'Conquest',
+    icon: '⚔️',
+    desc: 'Destroy all enemy castles to claim victory.',
+    detail: '3 AI kingdoms · All ages · Standard pace',
+    color: '#c8a96e',
+  },
+  survival: {
+    name: 'Survival',
+    icon: '🌊',
+    desc: 'Endless waves of raiders attack your kingdom.',
+    detail: 'Solo · Waves every 90s · Score by wave',
+    color: '#cc4422',
+  },
+  sandbox: {
+    name: 'Sandbox',
+    icon: '🏗️',
+    desc: 'Infinite resources. Build without limits.',
+    detail: 'No enemies · All ages unlocked · Creative',
+    color: '#44aa44',
+  },
+  wonder: {
+    name: 'Wonder Race',
+    icon: '🏛️',
+    desc: 'Build a Cathedral and defend it for 4 minutes.',
+    detail: '3 AI kingdoms · Aggressive · Glory or ruin',
+    color: '#d4af37',
+  },
+};
+
+export const KINGDOM_SKINS = [
+  { name: 'Azure',    color: 0x4488ff, hex: '#4488ff' },
+  { name: 'Crimson',  color: 0xff3333, hex: '#ff3333' },
+  { name: 'Emerald',  color: 0x33cc55, hex: '#33cc55' },
+  { name: 'Amber',    color: 0xffaa00, hex: '#ffaa00' },
+  { name: 'Violet',   color: 0xaa44ff, hex: '#aa44ff' },
+  { name: 'Obsidian', color: 0x4466aa, hex: '#4466aa' },
+];
