@@ -18,10 +18,12 @@ export class PlayerController {
     this.pitch   = 0;
     this.locked  = false;
 
-    this.rtsCam    = new THREE.PerspectiveCamera(55, aspect, 0.5, 2000);
-    this.rtsTarget = new THREE.Vector3(sp.x, 0, sp.z);
-    this.rtsHeight = 85;
-    this.rtsTilt   = 55;
+    this.rtsCam       = new THREE.PerspectiveCamera(55, aspect, 0.5, 2000);
+    this.rtsTarget    = new THREE.Vector3(sp.x, 0, sp.z);
+    this._smoothTarget = new THREE.Vector3(sp.x, 0, sp.z);
+    this.rtsHeight    = 85;
+    this._smoothHeight = 85;
+    this.rtsTilt      = 55;
     this._positionRTSCam();
 
     this.camera = this.rtsCam;
@@ -100,7 +102,6 @@ export class PlayerController {
             if (this.selected.length === 1) {
               const center = this.selected[0].position;
               this.rtsTarget.set(center.x, 0, center.z);
-              this._positionRTSCam();
             }
           }
         }
@@ -187,7 +188,6 @@ export class PlayerController {
     cvs.addEventListener('wheel', e => {
       if (this.mode === CAMERA_MODES.RTS) {
         this.rtsHeight = Math.max(20, Math.min(250, this.rtsHeight + e.deltaY * 0.1));
-        this._positionRTSCam();
       }
     });
   }
@@ -518,11 +518,19 @@ export class PlayerController {
 
   // ── Cameras ──────────────────────────────────────────────────────────────────
 
-  _positionRTSCam() {
+  _positionRTSCam(delta) {
+    if (delta) {
+      const t = Math.min(1, delta * 9);
+      this._smoothTarget.lerp(this.rtsTarget, t);
+      this._smoothHeight += (this.rtsHeight - this._smoothHeight) * t;
+    } else {
+      this._smoothTarget.copy(this.rtsTarget);
+      this._smoothHeight = this.rtsHeight;
+    }
     const tilt = this.rtsTilt * Math.PI / 180;
-    const back = this.rtsHeight / Math.tan(tilt);
-    this.rtsCam.position.set(this.rtsTarget.x, this.rtsHeight, this.rtsTarget.z + back);
-    this.rtsCam.lookAt(this.rtsTarget.x, 0, this.rtsTarget.z);
+    const back = this._smoothHeight / Math.tan(tilt);
+    this.rtsCam.position.set(this._smoothTarget.x, this._smoothHeight, this._smoothTarget.z + back);
+    this.rtsCam.lookAt(this._smoothTarget.x, 0, this._smoothTarget.z);
   }
 
   update(delta) {
@@ -620,7 +628,7 @@ export class PlayerController {
 
     this.rtsTarget.x = Math.max(-230, Math.min(230, this.rtsTarget.x));
     this.rtsTarget.z = Math.max(-230, Math.min(230, this.rtsTarget.z));
-    this._positionRTSCam();
+    this._positionRTSCam(delta);
   }
 
   onResize() {

@@ -177,6 +177,8 @@ export class Kingdom {
     for (const v of this.villagers) v.update(delta, this.world);
     for (const u of this.soldiers)  u.update(delta, this.world);
 
+    this._separateUnits(delta);
+
     // Tick active research
     if (this.activeResearch) {
       this.activeResearch.timer += delta;
@@ -226,6 +228,28 @@ export class Kingdom {
         if (u.isDead() || u.hp >= u.maxHp) continue;
         if (u.position.distanceTo(castle.position) < 20) {
           u.hp = Math.min(u.maxHp, u.hp + 2 * delta);
+        }
+      }
+    }
+  }
+
+  _separateUnits(delta) {
+    const all = this.allUnits();
+    const RADIUS = 1.5, FORCE = 4 * delta;
+    for (let i = 0; i < all.length; i++) {
+      for (let j = i + 1; j < all.length; j++) {
+        const a = all[i], b = all[j];
+        const dx = a.position.x - b.position.x;
+        const dz = a.position.z - b.position.z;
+        const dist2 = dx * dx + dz * dz;
+        if (dist2 > 0 && dist2 < RADIUS * RADIUS) {
+          const dist = Math.sqrt(dist2);
+          const push = (RADIUS - dist) / RADIUS * FORCE;
+          const nx = dx / dist, nz = dz / dist;
+          a.position.x += nx * push; a.position.z += nz * push;
+          b.position.x -= nx * push; b.position.z -= nz * push;
+          if (a.mesh) a.mesh.position.set(a.position.x, a.position.y, a.position.z);
+          if (b.mesh) b.mesh.position.set(b.position.x, b.position.y, b.position.z);
         }
       }
     }
