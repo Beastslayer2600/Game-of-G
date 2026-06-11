@@ -4,7 +4,8 @@ import { PlayerController } from './player/PlayerController.js';
 import { PlayerKingdom } from './kingdoms/PlayerKingdom.js';
 import { AIKingdom } from './kingdoms/AIKingdom.js';
 import { HUD } from './ui/HUD.js';
-import { GAME_STATES, KINGDOM_COLORS } from './constants.js';
+import { Unit } from './entities/Unit.js';
+import { GAME_STATES, KINGDOM_COLORS, KINGDOM_SKINS } from './constants.js';
 
 export class Game {
   constructor() {
@@ -24,6 +25,15 @@ export class Game {
     this._ambLight    = null;
     this._skyMesh     = null;
     this._tod         = 0.28; // 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset
+
+    // Game mode state
+    this.gameMode    = 'conquest';  // set by HUD before startGame()
+    this.playerSkin  = 0;           // index into KINGDOM_SKINS
+    this._waveNumber = 0;
+    this._waveTimer  = 90;
+    this._raiders    = [];          // survival mode: raider units (plain objects)
+    this._wonderTimer = 240;        // wonder mode: 4 minutes
+    this._wonderActive = false;
   }
 
   async init() {
@@ -36,7 +46,7 @@ export class Game {
     this.world.generate(p => this._progress(p));
 
     this._progress(80);
-    this._setupKingdoms();
+    // _setupKingdoms() is now called in startGame() after mode/skin selection
 
     this._progress(92);
     this.player = new PlayerController(this.scene, this.renderer, this);
@@ -180,23 +190,50 @@ export class Game {
       new THREE.Vector2(-175,  175),
       new THREE.Vector2( 175,  175),
     ];
-    for (let i = 0; i < 4; i++) {
+
+    const playerColor = (KINGDOM_SKINS[this.playerSkin]?.color ?? KINGDOM_COLORS[0]);
+
+    // In sandbox and survival modes, only create the player kingdom
+    const kingdomCount = (this.gameMode === 'sandbox' || this.gameMode === 'survival') ? 1 : 4;
+
+    for (let i = 0; i < kingdomCount; i++) {
       const p = starts[i];
       const y = this.world.getHeightAt(p.x, p.y);
       const pos = new THREE.Vector3(p.x, Math.max(0.5, y), p.y);
+      const color = i === 0 ? playerColor : KINGDOM_COLORS[i];
       const kingdom = i === 0
-        ? new PlayerKingdom(this.scene, this.world, 0, KINGDOM_COLORS[0], pos)
-        : new AIKingdom(this.scene, this.world, i, KINGDOM_COLORS[i], pos);
+        ? new PlayerKingdom(this.scene, this.world, 0, color, pos)
+        : new AIKingdom(this.scene, this.world, i, color, pos);
       this.kingdoms.push(kingdom);
       if (i === 0) this.playerKingdom = kingdom;
     }
     for (const k of this.kingdoms) k.setKingdoms?.(this.kingdoms);
   }
 
-  /** Called by HUD start button. */
+  /** Called by HUD start button. gameMode and playerSkin are set before this is called. */
   startGame() {
+    // Set up kingdoms now that we know mode + skin
+    this._setupKingdoms();
+
+    // Reposition the player camera to the kingdom start position
+    if (this.playerKingdom && this.player) {
+      const sp = this.playerKingdom.position;
+      this.player.rtsTarget.set(sp.x, 0, sp.z);
+      this.player._positionRTSCam?.();
+      this.player.fpsCam.position.set(sp.x, sp.y + 2.2, sp.z + 12);
+      this.player.fpsPos.copy(this.player.fpsCam.position);
+    }
+
     this.state = GAME_STATES.PLAYING;
     this.clock.start();
+
+    if (this.gameMode === 'sandbox') {
+      // All ages, unlimited resources
+      this.playerKingdom.age = 3;
+      Object.keys(this.playerKingdom.resources).forEach(k => {
+        this.playerKingdom.resources[k] = 9999;
+      });
+    }
   }
 
   start() {
@@ -220,6 +257,81 @@ export class Game {
       this.hud.update(delta);
     }
 
+    // Survival waves
+    if (this.state === GAME_STATES.PLAYING && this.gameMode === 'survival') {
+      this._waveTimer -= delta;
+      if (this._waveTimer <= 0) { this._waveTimer = 90; this._spawnSurvivalWave(); }
+      this._updateRaiders(delta);
+    }
+
+    // Sandbox: keep refilling resources
+    if (this.state === GAME_STATES.PLAYING && this.gameMode === 'sandbox') {
+      const r = this.playerKingdom.resources;
+      Object.keys(r).forEach(k => { r[k] = Math.min(9999, (r[k] ?? 0) + 3 * delta); });
+    }
+
+    // Wonder mode
+    if (this.state === GAME_STATES.PLAYING && this.gameMode === 'wonder') {
+      const wonder = this.playerKingdom.buildings.find(b => b.type === 'cathedral' && !b.isDestroyed());
+      if (wonder && !this._wonderActive) {
+        this._wonderActive = true;
+        this.hud?.showMsg('Cathedral built! Defend for 4 minutes!');
+      }
+      if (this._wonderActive) {
+        this._wonderTimer -= delta;
+        if (this._wonderTimer <= 0) { this._showWonderVictory(); }
+      }
+    }
+
     this.renderer.render(this.scene, this.player.camera);
+  }
+
+  _spawnSurvivalWave() {
+    this._waveNumber++;
+    const n = 3 + this._waveNumber * 2;
+    const types = ['soldier', 'soldier', 'archer', 'archer', 'knight'];
+    for (let i = 0; i < Math.min(n, 20); i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist  = 200 + Math.random() * 40;
+      const x = Math.max(-240, Math.min(240, Math.cos(angle) * dist));
+      const z = Math.max(-240, Math.min(240, Math.sin(angle) * dist));
+      const y = this.world.getHeightAt(x, z) + 0.1;
+      const type = types[Math.min(Math.floor(this._waveNumber / 2), types.length - 1)];
+      const pos = new THREE.Vector3(x, y, z);
+      const u = new Unit(this.scene, type, pos, 0xff2200, null);
+      u._isRaider = true;
+      this._raiders.push(u);
+    }
+    this.hud?.showMsg(`⚔ Wave ${this._waveNumber} incoming! (${n} raiders)`, false);
+    this.hud?.addCombatLog?.(`Wave ${this._waveNumber}: ${n} raiders attack!`);
+  }
+
+  _updateRaiders(delta) {
+    this._raiders = this._raiders.filter(r => !r.isDead());
+    const castle = this.playerKingdom.getCastle();
+    if (!castle) return;
+    for (const r of this._raiders) {
+      if (r.isDead()) continue;
+      // Attack nearby player units first, then march on castle
+      let target = null, td = 18;
+      for (const u of this.playerKingdom.allUnits()) {
+        if (u.isDead()) continue;
+        const d = r.position.distanceTo(u.position);
+        if (d < td) { td = d; target = u; }
+      }
+      if (!target && r.position.distanceTo(castle.position) < 8) {
+        if (r.attackCooldown <= 0) { castle.takeDamage(r.attack); r.attackCooldown = 1.5; }
+      } else if (target) {
+        r.attackTarget(target);
+      } else {
+        const jitter = new THREE.Vector3((Math.random() - 0.5) * 12, 0, (Math.random() - 0.5) * 12);
+        r.moveTo(castle.position.clone().add(jitter));
+      }
+      r.update(delta, this.world);
+    }
+  }
+
+  _showWonderVictory() {
+    if (this.hud) this.hud._showEndScreen(true);
   }
 }
