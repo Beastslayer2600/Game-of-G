@@ -11,17 +11,19 @@ export class PlayerController {
     const aspect = window.innerWidth / window.innerHeight;
 
     this.fpsCam = new THREE.PerspectiveCamera(75, aspect, 0.1, 800);
-    const sp = game.playerKingdom.position;
+    const sp = game.playerKingdom?.position ?? new THREE.Vector3(0, 10, 0);
     this.fpsCam.position.set(sp.x, sp.y + 2.2, sp.z + 12);
     this.fpsPos  = this.fpsCam.position.clone();
     this.yaw     = 0;
     this.pitch   = 0;
     this.locked  = false;
 
-    this.rtsCam    = new THREE.PerspectiveCamera(55, aspect, 0.5, 2000);
-    this.rtsTarget = new THREE.Vector3(sp.x, 0, sp.z);
-    this.rtsHeight = 85;
-    this.rtsTilt   = 55;
+    this.rtsCam       = new THREE.PerspectiveCamera(55, aspect, 0.5, 2000);
+    this.rtsTarget    = new THREE.Vector3(sp.x, 0, sp.z);
+    this._smoothTarget = new THREE.Vector3(sp.x, 0, sp.z);
+    this.rtsHeight    = 85;
+    this._smoothHeight = 85;
+    this.rtsTilt      = 55;
     this._positionRTSCam();
 
     this.camera = this.rtsCam;
@@ -38,6 +40,17 @@ export class PlayerController {
     this.selected         = [];
     this.selectedBuilding = null;
     this.possessedUnit    = null;
+
+    this.groups = {};    // { 1: [unit, ...], 2: [...], ... }
+    this._dragStart  = null;   // { x, y } screen coords
+    this._isDragging = false;
+    this._attackMove = false;  // A-key attack move mode
+    this._selectBox  = null;   // div element for drag rect
+
+    // Create selection box div
+    this._selectBox = document.createElement('div');
+    this._selectBox.style.cssText = 'position:fixed;border:2px solid #00ff88;background:rgba(0,255,136,0.08);pointer-events:none;display:none;z-index:300;';
+    document.body.appendChild(this._selectBox);
 
     this._listen();
   }
@@ -73,8 +86,48 @@ export class PlayerController {
         const u = this.game.playerKingdom.tryTrain('villager');
         this.game.hud?.showMsg(u ? 'Villager trained!' : 'Need: 50 food', !u);
       }
+
+      // Unit groups: Ctrl+1-5 assign, 1-5 select
+      if (e.code.startsWith('Digit') && this.mode === CAMERA_MODES.RTS) {
+        const n = parseInt(e.code.replace('Digit',''));
+        if (n >= 1 && n <= 5) {
+          if (this.keys['ControlLeft'] || this.keys['ControlRight']) {
+            this.groups[n] = [...this.selected];
+            this.game.hud?.showMsg(`Group ${n} assigned (${this.selected.length} units)`);
+          } else if (this.groups[n]?.length) {
+            for (const u of this.selected) u.setSelected?.(false);
+            this.selected = this.groups[n].filter(u => !u.isDead());
+            this.groups[n] = this.selected;
+            for (const u of this.selected) u.setSelected?.(true);
+            if (this.selected.length === 1) {
+              const center = this.selected[0].position;
+              this.rtsTarget.set(center.x, 0, center.z);
+            }
+          }
+        }
+      }
+
+      // Attack-move mode: press A (only in RTS, no ctrl, no build mode)
+      if (e.code === 'KeyA' && this.mode === CAMERA_MODES.RTS && !this.keys['ControlLeft'] && !this.buildType) {
+        if (this.selected.length) {
+          this._attackMove = true;
+          this.game.hud?.showMsg('Attack-move: right-click destination', false);
+        }
+      }
+
+      // Stop: press S to stop all selected (only in RTS, no ctrl, no build mode)
+      if (e.code === 'KeyS' && this.mode === CAMERA_MODES.RTS && !this.keys['ControlLeft'] && !this.buildType) {
+        for (const u of this.selected) { u.state = 'idle'; u.destination = null; u.target = null; }
+      }
     });
     window.addEventListener('keyup', e => { this.keys[e.code] = false; });
+
+    cvs.addEventListener('mousedown', e => {
+      if (e.button === 0 && this.mode === CAMERA_MODES.RTS && !this.buildType) {
+        this._dragStart = { x: e.clientX, y: e.clientY };
+        this._isDragging = false;
+      }
+    });
 
     window.addEventListener('mousemove', e => {
       this.mouseNDC.set(
@@ -83,6 +136,30 @@ export class PlayerController {
       );
       this.rawMouse.dx = e.movementX;
       this.rawMouse.dy = e.movementY;
+
+      if (this._dragStart && this.mode === CAMERA_MODES.RTS) {
+        const dx = e.clientX - this._dragStart.x;
+        const dy = e.clientY - this._dragStart.y;
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+          this._isDragging = true;
+          const x = Math.min(e.clientX, this._dragStart.x);
+          const y = Math.min(e.clientY, this._dragStart.y);
+          this._selectBox.style.display = 'block';
+          this._selectBox.style.left   = x + 'px';
+          this._selectBox.style.top    = y + 'px';
+          this._selectBox.style.width  = Math.abs(dx) + 'px';
+          this._selectBox.style.height = Math.abs(dy) + 'px';
+        }
+      }
+    });
+
+    cvs.addEventListener('mouseup', e => {
+      if (e.button === 0 && this._isDragging && this.mode === CAMERA_MODES.RTS) {
+        this._selectBox.style.display = 'none';
+        this._boxSelect(this._dragStart, { x: e.clientX, y: e.clientY });
+      }
+      this._dragStart  = null;
+      this._isDragging = false;
     });
 
     cvs.addEventListener('click', () => {
@@ -100,7 +177,7 @@ export class PlayerController {
       e.preventDefault();
       if (this.mode === CAMERA_MODES.RTS) {
         if (this.buildType) { this._cancelBuild(); return; }
-        if (this.selected.length) this._smartMove();
+        if (this.selected.length || this.selectedBuilding) this._smartMove();
       }
     });
 
@@ -111,7 +188,6 @@ export class PlayerController {
     cvs.addEventListener('wheel', e => {
       if (this.mode === CAMERA_MODES.RTS) {
         this.rtsHeight = Math.max(20, Math.min(250, this.rtsHeight + e.deltaY * 0.1));
-        this._positionRTSCam();
       }
     });
   }
@@ -273,11 +349,38 @@ export class PlayerController {
     }
   }
 
+  _boxSelect(start, end) {
+    const x1 = Math.min(start.x, end.x) / window.innerWidth  *  2 - 1;
+    const x2 = Math.max(start.x, end.x) / window.innerWidth  *  2 - 1;
+    const y1 = -(Math.min(start.y, end.y) / window.innerHeight * 2 - 1);
+    const y2 = -(Math.max(start.y, end.y) / window.innerHeight * 2 - 1);
+
+    for (const u of this.selected) u.setSelected?.(false);
+    this.selected = [];
+
+    for (const u of this.game.playerKingdom.allUnits()) {
+      if (u.isDead()) continue;
+      const pos = u.position.clone().project(this.rtsCam);
+      if (pos.x >= x1 && pos.x <= x2 && pos.y >= y2 && pos.y <= y1) {
+        this.selected.push(u);
+        u.setSelected?.(true);
+      }
+    }
+    if (this.selected.length) this.game.hud?.showMsg(`${this.selected.length} unit${this.selected.length>1?'s':''} selected`);
+  }
+
   // ── Smart right-click ────────────────────────────────────────────────────────
 
   _smartMove() {
     const pt = this._groundPoint();
     if (!pt) return;
+
+    // If building selected and no units selected, set rally point
+    if (this.selectedBuilding && !this.selected.length) {
+      this.selectedBuilding.rallyPoint = pt.clone();
+      this.game.hud?.showMsg(`Rally point set for ${this.selectedBuilding.type}`);
+      return;
+    }
 
     const villagers = this.selected.filter(u => u.type === 'villager' && !u.isDead());
     const fighters  = this.selected.filter(u => u.type !== 'villager'  && !u.isDead());
@@ -292,6 +395,47 @@ export class PlayerController {
     }
 
     if (fighters.length) {
+      // Attack-move mode: search wider area and also check buildings
+      if (this._attackMove) {
+        this._attackMove = false; // consume the mode
+        let target = null, bestDist = 40;
+        for (const k of this.game.kingdoms) {
+          if (k === this.game.playerKingdom) continue;
+          for (const eu of k.allUnits()) {
+            if (eu.isDead()) continue;
+            const d = pt.distanceTo(eu.position);
+            if (d < bestDist) { bestDist = d; target = eu; }
+          }
+          if (!target) {
+            for (const b of k.buildings) {
+              if (b.isDestroyed()) continue;
+              const d = pt.distanceTo(b.position);
+              if (d < bestDist) { bestDist = d; target = b; }
+            }
+          }
+        }
+        if (target) {
+          fighters.forEach(u => u.attackTarget(target));
+          this.game.hud?.showMsg('Attack-move!');
+          return;
+        }
+        // Fall through to normal move
+      }
+
+      // Check for enemy buildings near click location
+      for (const k of this.game.kingdoms) {
+        if (k === this.game.playerKingdom) continue;
+        for (const b of k.buildings) {
+          if (b.isDestroyed()) continue;
+          const d = pt.distanceTo(b.position);
+          if (d < 8) {
+            fighters.forEach(u => u.attackTarget(b));
+            this.game.hud?.showMsg(`Attacking ${b.type}!`);
+            return;
+          }
+        }
+      }
+
       let target = null, bestDist = 16;
       for (const k of this.game.kingdoms) {
         if (k === this.game.playerKingdom) continue;
@@ -374,11 +518,19 @@ export class PlayerController {
 
   // ── Cameras ──────────────────────────────────────────────────────────────────
 
-  _positionRTSCam() {
+  _positionRTSCam(delta) {
+    if (delta) {
+      const t = Math.min(1, delta * 9);
+      this._smoothTarget.lerp(this.rtsTarget, t);
+      this._smoothHeight += (this.rtsHeight - this._smoothHeight) * t;
+    } else {
+      this._smoothTarget.copy(this.rtsTarget);
+      this._smoothHeight = this.rtsHeight;
+    }
     const tilt = this.rtsTilt * Math.PI / 180;
-    const back = this.rtsHeight / Math.tan(tilt);
-    this.rtsCam.position.set(this.rtsTarget.x, this.rtsHeight, this.rtsTarget.z + back);
-    this.rtsCam.lookAt(this.rtsTarget.x, 0, this.rtsTarget.z);
+    const back = this._smoothHeight / Math.tan(tilt);
+    this.rtsCam.position.set(this._smoothTarget.x, this._smoothHeight, this._smoothTarget.z + back);
+    this.rtsCam.lookAt(this._smoothTarget.x, 0, this._smoothTarget.z);
   }
 
   update(delta) {
@@ -476,7 +628,7 @@ export class PlayerController {
 
     this.rtsTarget.x = Math.max(-230, Math.min(230, this.rtsTarget.x));
     this.rtsTarget.z = Math.max(-230, Math.min(230, this.rtsTarget.z));
-    this._positionRTSCam();
+    this._positionRTSCam(delta);
   }
 
   onResize() {
